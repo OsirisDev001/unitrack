@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="color-scheme" content="dark" />
+  <title>UniTrack</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <!-- Вход -->
+  <section id="login" class="login hidden" aria-labelledby="login-title">
+    <form id="login-form" class="login-card" autocomplete="on">
+      <div class="brand brand-lg"><span class="brand-mark" aria-hidden="true"></span>UniTrack</div>
+      <h1 id="login-title">Вход через edu.grsu.by</h1>
+      <p class="muted">Тот же логин и пароль, что на образовательном портале. Хранятся только на этом устройстве.</p>
+      <label>Логин
+        <input id="login-user" name="username" autocomplete="username" required />
+      </label>
+      <label>Пароль
+        <input id="login-pass" name="password" type="password" autocomplete="current-password" required />
+      </label>
+      <p id="login-error" class="error hidden" role="alert"></p>
+      <button class="btn btn-primary" type="submit" id="login-btn">Войти</button>
+    </form>
+  </section>
+
+  <!-- Приложение -->
+  <div id="app" class="app hidden">
+    <nav class="nav" aria-label="Разделы">
+      <div class="brand"><span class="brand-mark" aria-hidden="true"></span>UniTrack</div>
+      <span class="nav-pill" aria-hidden="true"></span>
+      <button class="nav-btn" data-view="today"><span class="ico ico-today"></span><span>Сегодня</span></button>
+      <button class="nav-btn" data-view="schedule"><span class="ico ico-cal"></span><span>Расписание</span></button>
+      <button class="nav-btn" data-view="tasks"><span class="ico ico-check"></span><span>Задачи</span><b class="badge hidden" id="tasks-badge"></b></button>
+      <button class="nav-btn" data-view="skips"><span class="ico ico-skip"></span><span>Пропуски</span></button>
+      <button class="nav-btn" data-view="study"><span class="ico ico-cap"></span><span>Учёба</span></button>
+      <div class="nav-foot">
+        <div class="sync" id="sync-status">—</div>
+        <div class="nav-foot-row">
+          <button class="btn btn-ghost btn-sm" id="refresh-btn" title="Обновить данные с сайта">Обновить</button>
+          <button class="btn btn-ghost btn-sm" data-go="settings" title="Настройки">Настройки<i class="dot hidden" id="update-dot"></i></button>
+        </div>
+      </div>
+    </nav>
+
+    <main class="main">
+      <div id="banner" class="banner hidden" role="status"></div>
+
+      <!-- Сегодня -->
+      <section class="view" data-view="today">
+        <header class="view-head">
+          <div>
+            <p class="eyebrow" id="today-date"></p>
+            <h1 id="today-title">Сегодня</h1>
+          </div>
+          <button class="icon-btn mobile-only" data-go="settings" aria-label="Настройки"><span class="ico ico-gear"></span><i class="dot hidden" id="update-dot-m"></i></button>
+        </header>
+        <div class="grid-today">
+          <article class="card card-next rise" id="next-card"></article>
+          <article class="card card-meter rise" id="meter-card"></article>
+          <article class="card card-span rise">
+            <div class="card-head"><h2>Пары сегодня</h2><button class="link" data-go="schedule">Вся неделя →</button></div>
+            <div id="today-lessons"></div>
+          </article>
+          <article class="card card-span rise">
+            <div class="card-head"><h2>Горит</h2><button class="link" data-go="tasks">Все задачи →</button></div>
+            <div id="today-tasks"></div>
+          </article>
+        </div>
+      </section>
+
+      <!-- Расписание -->
+      <section class="view" data-view="schedule">
+        <header class="view-head"><h1>Расписание</h1></header>
+        <div class="day-strip" id="day-strip" role="tablist"></div>
+        <div id="day-lessons" class="rise"></div>
+      </section>
+
+      <!-- Задачи -->
+      <section class="view" data-view="tasks">
+        <header class="view-head">
+          <h1>Задачи</h1>
+          <button class="btn btn-primary" id="task-add-btn">+ Задача</button>
+        </header>
+        <form class="quick-add" id="quick-add">
+          <input id="quick-title" placeholder="Быстро: «Лаба 3 по сетям»" aria-label="Название задачи" />
+          <input id="quick-due" type="datetime-local" aria-label="Срок" />
+          <button class="btn" type="submit">Добавить</button>
+        </form>
+        <div id="task-list"></div>
+      </section>
+
+      <!-- Пропуски -->
+      <section class="view" data-view="skips">
+        <header class="view-head"><h1>Пропуски</h1></header>
+        <div id="skips-summary" class="rise"></div>
+        <div id="skips-list"></div>
+      </section>
+
+      <!-- Учёба: профиль + разделы с сайта -->
+      <section class="view" data-view="study">
+        <header class="view-head"><h1>Учёба</h1></header>
+        <article class="card profile rise" id="profile-card"></article>
+        <div class="tiles" id="study-tiles"></div>
+      </section>
+
+      <!-- Один раздел из «Учёбы» -->
+      <section class="view" data-view="detail">
+        <header class="view-head">
+          <div class="with-back">
+            <button class="icon-btn" data-go="study" aria-label="Назад"><span class="ico ico-back"></span></button>
+            <h1 id="detail-title"></h1>
+          </div>
+        </header>
+        <div id="detail-body"></div>
+      </section>
+
+      <!-- Настройки -->
+      <section class="view" data-view="settings">
+        <header class="view-head"><h1>Настройки</h1></header>
+        <article class="card stack rise">
+          <h2>Синхронизация ноутбук ↔ телефон</h2>
+          <div id="sync-server" class="hidden">
+            <p class="muted small">На телефоне открой UniTrack → Настройки и один раз введи этот код. Адрес не нужен: телефон сам найдёт ноутбук в той же Wi-Fi сети.</p>
+            <div class="pin" id="sync-pin">——————</div>
+            <p class="muted small">Если Windows спросит про брандмауэр — разреши доступ для частных сетей.</p>
+          </div>
+          <form id="sync-client" class="hidden stack">
+            <p class="muted small">Введи код из UniTrack на ноутбуке (Настройки). Дальше телефон будет находить ноутбук сам, когда вы в одной Wi-Fi сети.</p>
+            <label>Код с ноутбука <input id="sync-code" inputmode="numeric" maxlength="6" placeholder="6 цифр" autocomplete="off" /></label>
+            <button class="btn btn-primary" type="submit">Подключить</button>
+          </form>
+          <p class="small" id="sync-msg"></p>
+        </article>
+        <article class="card stack rise">
+          <div class="card-head"><h2>Обновления</h2><span class="muted small" id="app-version"></span></div>
+          <p class="small muted" id="update-msg">Приложение само проверяет обновления раз в день.</p>
+          <div class="btn-row">
+            <button class="btn" id="update-check">Проверить обновления</button>
+            <button class="btn btn-primary hidden" id="update-install">Обновить</button>
+          </div>
+        </article>
+        <article class="card stack rise">
+          <h2>Пропуски</h2>
+          <label class="row">Лимит неуважительных часов за семестр
+            <input id="limit-input" type="number" min="1" max="200" step="1" />
+          </label>
+        </article>
+        <article class="card stack rise">
+          <h2>Аккаунт</h2>
+          <p class="muted small" id="account-line"></p>
+          <div><button class="btn btn-danger btn-sm" id="logout-btn">Выйти из аккаунта</button></div>
+        </article>
+      </section>
+    </main>
+  </div>
+
+  <div class="toast hidden" id="toast" role="status"></div>
+
+  <!-- Редактор задачи -->
+  <dialog id="task-dialog">
+    <form method="dialog" id="task-form">
+      <h2 id="task-dialog-title">Новая задача</h2>
+      <label>Что сделать
+        <input id="t-title" required maxlength="200" />
+      </label>
+      <label>Предмет
+        <input id="t-subject" list="subjects" maxlength="120" placeholder="Начни вводить…" />
+        <datalist id="subjects"></datalist>
+      </label>
+      <div class="row2">
+        <label>Тип
+          <select id="t-kind">
+            <option value="lab">Лаба</option>
+            <option value="hw">Домашка</option>
+            <option value="course">Курсовой</option>
+            <option value="test">Контрольная / зачёт</option>
+            <option value="exam">Экзамен</option>
+            <option value="other">Другое</option>
+          </select>
+        </label>
+        <label>Срок
+          <input id="t-due" type="datetime-local" />
+        </label>
+      </div>
+      <label>Заметка
+        <textarea id="t-notes" rows="3" maxlength="2000"></textarea>
+      </label>
+      <div class="dialog-actions">
+        <button type="button" class="btn btn-danger btn-ghost" id="t-delete">Удалить</button>
+        <span class="spacer"></span>
+        <button type="button" class="btn btn-ghost" id="t-cancel">Отмена</button>
+        <button type="submit" class="btn btn-primary" id="t-save">Сохранить</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

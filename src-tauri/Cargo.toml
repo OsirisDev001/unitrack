@@ -1,0 +1,37 @@
+[package]
+name = "unitrack"
+version = "0.2.0"
+description = "Дедлайны, расписание и пропуски ГрГУ"
+edition = "2021"
+
+[lib]
+name = "unitrack_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "cookies"] }
+regex = "1"
+getrandom = "0.2"
+tokio = { version = "1", features = ["sync"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt", "macros"] }
+
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tiny_http = "0.12"
+
+[target.'cfg(windows)'.dependencies]
+keyring = { version = "3", features = ["windows-native"] }
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true

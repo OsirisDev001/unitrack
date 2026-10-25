@@ -1,0 +1,112 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: npm ci
+      - run: npm test
+      - run: npx tauri build
+      - name: collect
+        shell: bash
+        run: |
+          V=$(node -p "require('./package.json').version")
+          mkdir out
+          cp src-tauri/target/release/bundle/nsis/*-setup.exe "out/UniTrack-$V-setup.exe"
+          cp src-tauri/target/release/unitrack.exe "out/UniTrack-$V-portable.exe"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: out/*
+
+  android:
+    runs-on: ubuntu-latest
+    env:
+      NDK_VERSION: 27.0.12077973
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - name: android sdk
+        run: |
+          SDKM="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          [ -x "$SDKM" ] || SDKM="$(ls -d $ANDROID_HOME/cmdline-tools/*/bin/sdkmanager | tail -1)"
+          yes | "$SDKM" --licenses > /dev/null || true
+          "$SDKM" --install "platforms;android-34" "build-tools;34.0.0" "ndk;${NDK_VERSION}" > /dev/null
+          echo "NDK_HOME=$ANDROID_HOME/ndk/${NDK_VERSION}" >> "$GITHUB_ENV"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: npm ci
+      - run: npx tauri android init --ci
+      - run: npx tauri icon app-icon.png
+      - run: npx tauri android build --apk --target aarch64
+      - name: sign
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          KS_PASS: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE_B64" ] || [ -z "$KS_PASS" ]; then
+            echo "::error::Нет секретов ANDROID_KEYSTORE_B64 / ANDROID_KEY_PASSWORD (Settings → Secrets and variables → Actions)"
+            exit 1
+          fi
+          V=$(node -p "require('./package.json').version")
+          BT="$ANDROID_HOME/build-tools/34.0.0"
+          echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          IN=$(find src-tauri/gen/android/app/build/outputs/apk -name "*release*.apk" | head -1)
+          "$BT/zipalign" -f -p 4 "$IN" "$RUNNER_TEMP/aligned.apk"
+          mkdir out
+          "$BT/apksigner" sign --ks "$RUNNER_TEMP/release.jks" --ks-key-alias unitrack \
+            --ks-pass env:KS_PASS --key-pass env:KS_PASS \
+            --out "out/UniTrack-$V.apk" "$RUNNER_TEMP/aligned.apk"
+          "$BT/apksigner" verify "out/UniTrack-$V.apk"
+          rm -f "$RUNNER_TEMP/release.jks"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android
+          path: out/*.apk
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [windows, android]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: checksums
+        run: cd dist && sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true

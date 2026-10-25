@@ -1,0 +1,22 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Базовые права главного окна",
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "core:default",
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [
+        {
+          "url": "https://edu.grsu.by/*"
+        },
+        {
+          "url": "https://github.com/OsirisDev001/unitrack/*"
+        }
+      ]
+    }
+  ]
+}
