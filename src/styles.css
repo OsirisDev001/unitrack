@@ -237,7 +237,8 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator { filter: invert
 .next-title { font-size: 22px; font-weight: 800; line-height: 1.2; letter-spacing: -0.02em; }
 .next-meta { display: flex; flex-wrap: wrap; gap: 6px 14px; color: var(--muted); font-size: 14px; }
 .countdown { font-variant-numeric: tabular-nums; font-size: 40px; font-weight: 800; letter-spacing: -0.04em; line-height: 1; margin-top: 4px; }
-.progress { height: 6px; border-radius: 3px; background: var(--surface-3); overflow: hidden; }
+.progress { position: relative; height: 6px; border-radius: 3px; background: var(--surface-3); overflow: hidden; }
+.progress-gap { position: absolute; top: 0; bottom: 0; background: var(--bg); opacity: 0.85; }
 .progress > i { display: block; height: 100%; border-radius: 3px; background: linear-gradient(90deg, #a98bff, #e2d6ff); transition: width 0.8s var(--ease); }
 
 /* счётчик пропусков */

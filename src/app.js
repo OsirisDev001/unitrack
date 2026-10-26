@@ -1,7 +1,7 @@
 import {
   DEFAULT_LIMIT, normalizeSkips, semesterStats, semesterOf, groupBySemester, normalizeSchedule,
   lessonStatus, nextLesson, subjectsFrom, taskBucket, BUCKETS, sortTasks, relativeDue, sameDay,
-  pluralHours, pluralPairs,
+  pluralHours, pluralPairs, lessonPhase, HALF, BREAK,
 } from "./logic.js";
 import { demoBackend } from "./demo.js";
 import {
@@ -340,11 +340,20 @@ function renderToday(now = new Date()) {
     const cur = now.getHours() * 60 + now.getMinutes();
     let label, big = "", bar = "";
     if (isNow) {
-      const left = l.endMin - cur;
-      const pct = Math.round(((cur - l.startMin) / (l.endMin - l.startMin)) * 100);
-      label = `<div class="next-label live">Идёт сейчас</div>`;
-      big = `<div class="countdown">${left} мин</div><div class="muted small">до конца пары</div>`;
-      bar = `<div class="progress"><i style="width:${pct}%"></i></div>`;
+      const { phase, left } = lessonPhase(l, cur);
+      const len = l.endMin - l.startMin;
+      const pct = Math.round(((cur - l.startMin) / len) * 100);
+      const phaseText = {
+        first: ["Идёт сейчас · 1-я половина", "до перерыва"],
+        break: ["Перерыв 5 минут", "до второй половины"],
+        second: ["Идёт сейчас · 2-я половина", "до конца пары"],
+        whole: ["Идёт сейчас", "до конца пары"],
+      }[phase];
+      label = `<div class="next-label live">${phaseText[0]}</div>`;
+      big = `<div class="countdown">${left} мин</div><div class="muted small">${phaseText[1]}</div>`;
+      const gap = phase === "whole" ? "" :
+        `<b class="progress-gap" style="left:${(HALF / len) * 100}%;width:${(BREAK / len) * 100}%"></b>`;
+      bar = `<div class="progress"><i style="width:${pct}%"></i>${gap}</div>`;
     } else if (sameDay(day.date, now)) {
       const until = l.startMin - cur;
       label = `<div class="next-label">Следующая пара</div>`;

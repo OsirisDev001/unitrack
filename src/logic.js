@@ -131,6 +131,23 @@ export function lessonStatus(day, lesson, now = new Date()) {
   return "later";
 }
 
+/** Пара в ГрГУ — две половины по 40 минут с перерывом 5 минут (всего 85). */
+export const HALF = 40;
+export const BREAK = 5;
+
+/**
+ * Где мы внутри идущей пары: первая половина, перерыв или вторая.
+ * Для пар нестандартной длины половин нет — просто до конца.
+ * Возвращает { phase: "first" | "break" | "second" | "whole", left } — минут до смены фазы.
+ */
+export function lessonPhase(lesson, cur) {
+  const { startMin: s, endMin: e } = lesson;
+  if (e - s !== HALF * 2 + BREAK) return { phase: "whole", left: e - cur };
+  if (cur < s + HALF) return { phase: "first", left: s + HALF - cur };
+  if (cur < s + HALF + BREAK) return { phase: "break", left: s + HALF + BREAK - cur };
+  return { phase: "second", left: e - cur };
+}
+
 /** Текущая или ближайшая пара во всём расписании. */
 export function nextLesson(days, now = new Date()) {
   const cur = now.getHours() * 60 + now.getMinutes();

@@ -76,3 +76,12 @@ test("склонения", () => {
   assert.equal(pluralPairs(2), "2 пары");
   assert.equal(pluralPairs(1), "1 пара");
 });
+
+test("половины пары и перерыв", async () => {
+  const { lessonPhase } = await import("../src/logic.js");
+  const l = { startMin: 9 * 60, endMin: 10 * 60 + 25 }; // 09:00–10:25
+  assert.deepEqual(lessonPhase(l, 9 * 60 + 10), { phase: "first", left: 30 });
+  assert.deepEqual(lessonPhase(l, 9 * 60 + 41), { phase: "break", left: 4 });
+  assert.deepEqual(lessonPhase(l, 9 * 60 + 45), { phase: "second", left: 40 });
+  assert.deepEqual(lessonPhase({ startMin: 600, endMin: 690 }, 610), { phase: "whole", left: 80 });
+});
