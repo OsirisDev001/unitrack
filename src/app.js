@@ -884,7 +884,7 @@ async function checkUpdates(manual) {
     ["#update-dot", "#update-dot-m"].forEach((s) => $(s)?.classList.toggle("hidden", !has));
     if (has) {
       msg.textContent = `Доступна версия ${u.latest}. ${u.notes ? u.notes.split("\n")[0].slice(0, 160) : ""}`;
-      $("#update-install").textContent = isAndroid ? "Скачать APK" : "Обновить";
+      $("#update-install").textContent = "Обновить";
       if (!manual) toast(`Вышла версия ${u.latest} — обновить можно в настройках`);
     } else if (manual) {
       msg.textContent = u.latest ? `У тебя последняя версия (${u.current}).` : "Релизов пока нет.";
@@ -901,15 +901,16 @@ $("#update-check").addEventListener("click", () => checkUpdates(true));
 $("#update-install").addEventListener("click", async () => {
   const u = upd.info;
   if (!u?.available) return;
-  if (isAndroid || !u.asset) {
-    openExternal(u.asset || u.page);
-    $("#update-msg").textContent = "Скачивание началось в браузере. Открой APK и установи поверх — задачи сохранятся.";
-    return;
-  }
+  if (!u.asset) { openExternal(u.page); return; }
   $("#update-install").disabled = true;
-  $("#update-msg").textContent = "Скачиваю установщик… Приложение перезапустится само.";
-  try { await api.installUpdate(u.asset); }
-  catch (err) { $("#update-msg").textContent = String(err); $("#update-install").disabled = false; }
+  $("#update-msg").textContent = isAndroid
+    ? "Скачиваю обновление… Потом Android спросит «Установить?» — задачи сохранятся."
+    : "Скачиваю установщик… Приложение перезапустится само.";
+  try {
+    await api.installUpdate(u.asset);
+    if (isAndroid) $("#update-msg").textContent = "Нажми «Установить» в окне Android.";
+  } catch (err) { $("#update-msg").textContent = String(err); }
+  finally { $("#update-install").disabled = false; }
 });
 
 async function initUpdates() {

@@ -1,7 +1,7 @@
 {
   "name": "unitrack",
   "private": true,
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "Дедлайны, расписание и пропуски ГрГУ",
   "scripts": {
     "tauri": "tauri",

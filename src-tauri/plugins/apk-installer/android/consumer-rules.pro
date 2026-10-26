@@ -1,0 +1,1 @@
+-keep class by.tomashevich.apkinstaller.** { *; }

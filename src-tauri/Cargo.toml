@@ -1,6 +1,6 @@
 [package]
 name = "unitrack"
-version = "0.2.3"
+version = "0.2.4"
 description = "Дедлайны, расписание и пропуски ГрГУ"
 edition = "2021"
 
@@ -26,6 +26,9 @@ tokio = { version = "1", features = ["rt", "macros"] }
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tiny_http = "0.12"
+
+[target.'cfg(target_os = "android")'.dependencies]
+tauri-plugin-apk-installer = { path = "plugins/apk-installer" }
 
 [target.'cfg(windows)'.dependencies]
 keyring = { version = "3", features = ["windows-native"] }

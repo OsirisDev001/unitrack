@@ -499,28 +499,38 @@ async fn check_update(app: tauri::AppHandle) -> Result<UpdateInfo, String> {
     })
 }
 
-/// Windows: скачать установщик новой версии и запустить его. Данные приложения при этом сохраняются.
+/// Скачивает файл релиза из этого репозитория.
+async fn download_release(url: &str) -> Result<Vec<u8>, String> {
+    let bytes = reqwest::Client::builder()
+        .timeout(Duration::from_secs(300))
+        .user_agent("UniTrack-updater")
+        .build()
+        .map_err(|e| e.to_string())?
+        .get(url)
+        .send()
+        .await
+        .map_err(|_| "Не удалось скачать обновление. Проверь интернет.".to_string())?
+        .error_for_status()
+        .map_err(|e| e.to_string())?
+        .bytes()
+        .await
+        .map_err(|_| "Скачивание оборвалось. Попробуй ещё раз.".to_string())?;
+    Ok(bytes.to_vec())
+}
+
+/// Обновление: Windows — скачать установщик и запустить его; Android — скачать APK
+/// и показать системное окно установки. Данные приложения в обоих случаях сохраняются.
 #[tauri::command]
 async fn install_update(app: tauri::AppHandle, url: String) -> Result<(), String> {
-    if !release_asset_allowed(&url) || !url.ends_with("-setup.exe") {
+    if !release_asset_allowed(&url) {
         return Err("Адрес обновления не из репозитория UniTrack".into());
     }
     #[cfg(windows)]
     {
-        let bytes = reqwest::Client::builder()
-            .timeout(Duration::from_secs(300))
-            .user_agent("UniTrack-updater")
-            .build()
-            .map_err(|e| e.to_string())?
-            .get(&url)
-            .send()
-            .await
-            .map_err(|_| "Не удалось скачать обновление".to_string())?
-            .error_for_status()
-            .map_err(|e| e.to_string())?
-            .bytes()
-            .await
-            .map_err(|e| e.to_string())?;
+        if !url.ends_with("-setup.exe") {
+            return Err("Это не установщик UniTrack".into());
+        }
+        let bytes = download_release(&url).await?;
         // Настоящий установщик NSIS начинается с «MZ» и весит больше мегабайта.
         if bytes.len() < 1_000_000 || &bytes[..2] != b"MZ" {
             return Err("Скачанный файл не похож на установщик".into());
@@ -531,17 +541,64 @@ async fn install_update(app: tauri::AppHandle, url: String) -> Result<(), String
         app.exit(0);
         Ok(())
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "android")]
     {
-        let _ = app;
-        Err("Автоустановка есть только на Windows".into())
+        use tauri_plugin_apk_installer::{ApkInstallerExt, NEED_PERMISSION};
+        if !url.ends_with(".apk") {
+            return Err("Это не APK UniTrack".into());
+        }
+        let dir = app.path().app_cache_dir().map_err(|e| e.to_string())?.join("updates");
+        let path = dir.join("UniTrack-update.apk");
+        // Уже скачан в этом запуске (например, ждали разрешение на установку) — второй раз не качаем.
+        if !(path.is_file() && app.state::<UpdateState>().same_url(&url)) {
+            let bytes = download_release(&url).await?;
+            // APK — это zip: начинается с «PK». Подпись Android проверит сам при установке.
+            if bytes.len() < 1_000_000 || &bytes[..4] != b"PK\x03\x04" {
+                return Err("Скачанный файл не похож на APK".into());
+            }
+            let _ = fs::remove_dir_all(&dir);
+            fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+            fs::write(&path, &bytes).map_err(|e| e.to_string())?;
+            app.state::<UpdateState>().remember(&url);
+        }
+        app.apk_installer().install(&path).map_err(|e| {
+            if e.contains(NEED_PERMISSION) {
+                "Разреши UniTrack устанавливать приложения (настройки уже открыты), вернись и нажми «Обновить» ещё раз".to_string()
+            } else {
+                e
+            }
+        })
+    }
+    #[cfg(not(any(windows, target_os = "android")))]
+    {
+        let _ = (app, download_release);
+        Err("Автообновление есть только на Windows и Android".into())
+    }
+}
+
+/// Какой APK уже лежит в кэше — чтобы после выдачи разрешения не качать заново.
+#[derive(Default)]
+struct UpdateState(Mutex<Option<String>>);
+
+impl UpdateState {
+    #[allow(dead_code)]
+    fn same_url(&self, url: &str) -> bool {
+        self.0.lock().unwrap().as_deref() == Some(url)
+    }
+    #[allow(dead_code)]
+    fn remember(&self, url: &str) {
+        *self.0.lock().unwrap() = Some(url.to_string());
     }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .manage(UpdateState::default());
+    #[cfg(target_os = "android")]
+    let builder = builder.plugin(tauri_plugin_apk_installer::init());
+    builder
         .setup(|app| {
             let dir = app.path().app_data_dir()?;
             fs::create_dir_all(&dir)?;
