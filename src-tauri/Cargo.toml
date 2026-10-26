@@ -1,6 +1,6 @@
 [package]
 name = "unitrack"
-version = "0.2.0"
+version = "0.2.1"
 description = "Дедлайны, расписание и пропуски ГрГУ"
 edition = "2021"
 
@@ -19,7 +19,7 @@ serde_json = "1"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "cookies"] }
 regex = "1"
 getrandom = "0.2"
-tokio = { version = "1", features = ["sync"] }
+tokio = { version = "1", features = ["sync", "time"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt", "macros"] }

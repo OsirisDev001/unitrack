@@ -3,7 +3,10 @@
 use std::{
     fs,
     path::PathBuf,
-    sync::{LazyLock, Mutex},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        LazyLock, Mutex,
+    },
     time::Duration,
 };
 
@@ -53,7 +56,42 @@ struct Credentials {
 
 struct AppState {
     client: Mutex<reqwest::Client>,
+    /// Номер текущей сессии: растёт после каждого успешного входа.
+    session: AtomicU64,
+    /// Входим строго по одному: параллельные входы с общими cookies ломают друг другу SAML.
+    login_lock: tokio::sync::Mutex<()>,
     data_dir: PathBuf,
+}
+
+impl AppState {
+    fn snapshot(&self) -> (reqwest::Client, u64) {
+        (self.client.lock().unwrap().clone(), self.session.load(Ordering::SeqCst))
+    }
+
+    fn set_client(&self, client: reqwest::Client) {
+        *self.client.lock().unwrap() = client;
+        self.session.fetch_add(1, Ordering::SeqCst);
+    }
+
+    /// Перелогин после протухшей сессии. Если пока ждали очередь, кто-то другой уже вошёл —
+    /// просто берём его сессию. Каждый вход — с чистыми cookies, как самый первый.
+    async fn relogin(&self, creds: &Credentials, seen: u64) -> Result<(), String> {
+        let _guard = self.login_lock.lock().await;
+        if self.session.load(Ordering::SeqCst) != seen {
+            return Ok(());
+        }
+        let fresh = new_client();
+        if let Err(first) = moodle_login(&fresh, creds).await {
+            // Сайт иногда отвечает формой входа повторно спросонья — одна повторная попытка.
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            let again = new_client();
+            moodle_login(&again, creds).await.map_err(|_| first)?;
+            self.set_client(again);
+            return Ok(());
+        }
+        self.set_client(fresh);
+        Ok(())
+    }
 }
 
 fn new_client() -> reqwest::Client {
@@ -294,9 +332,10 @@ async fn login(
         password,
     };
     let client = new_client();
+    let _guard = state.login_lock.lock().await;
     moodle_login(&client, &creds).await?;
     secrets::save(&state.data_dir, &creds)?;
-    *state.client.lock().unwrap() = client;
+    state.set_client(client);
     Ok(())
 }
 
@@ -308,7 +347,7 @@ fn saved_username(state: State<'_, AppState>) -> Option<String> {
 #[tauri::command]
 fn logout(state: State<'_, AppState>) {
     secrets::clear(&state.data_dir);
-    *state.client.lock().unwrap() = new_client();
+    state.set_client(new_client());
     for m in ALLOWED_METHODS {
         let _ = fs::remove_file(state.data_dir.join(format!("cache_{m}.json")));
     }
@@ -321,12 +360,13 @@ async fn fetch_api(state: State<'_, AppState>, method: String) -> Result<String,
         return Err("Неизвестный метод".into());
     }
     let creds = secrets::load(&state.data_dir).ok_or("Нужно войти")?;
-    let client = state.client.lock().unwrap().clone();
+    let (client, seen) = state.snapshot();
 
     let data = match api_call(&client, &method).await? {
         Some(d) => d,
         None => {
-            moodle_login(&client, &creds).await?;
+            state.relogin(&creds, seen).await?;
+            let (client, _) = state.snapshot();
             api_call(&client, &method)
                 .await?
                 .ok_or("Сайт вернул не то, что ожидалось. Попробуй позже.")?
@@ -516,6 +556,8 @@ pub fn run() {
             }
             app.manage(AppState {
                 client: Mutex::new(new_client()),
+                session: AtomicU64::new(0),
+                login_lock: tokio::sync::Mutex::new(()),
                 data_dir: dir,
             });
             Ok(())
