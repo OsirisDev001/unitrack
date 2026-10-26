@@ -340,17 +340,19 @@ function renderToday(now = new Date()) {
     const cur = now.getHours() * 60 + now.getMinutes();
     let label, big = "", bar = "";
     if (isNow) {
-      const { phase, left } = lessonPhase(l, cur);
+      const { phase } = lessonPhase(l, cur);
       const len = l.endMin - l.startMin;
+      const left = l.endMin - cur;
       const pct = Math.round(((cur - l.startMin) / len) * 100);
-      const phaseText = {
-        first: ["Идёт сейчас · 1-я половина", "до перерыва"],
-        break: ["Перерыв 5 минут", "до второй половины"],
-        second: ["Идёт сейчас · 2-я половина", "до конца пары"],
-        whole: ["Идёт сейчас", "до конца пары"],
+      const hhmm = (m) => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+      const hint = {
+        first: " · 1-я полупара",
+        break: ` · перерыв до ${hhmm(l.startMin + HALF + BREAK)}`,
+        second: " · 2-я полупара",
+        whole: "",
       }[phase];
-      label = `<div class="next-label live">${phaseText[0]}</div>`;
-      big = `<div class="countdown">${left} мин</div><div class="muted small">${phaseText[1]}</div>`;
+      label = `<div class="next-label live">Идёт сейчас</div>`;
+      big = `<div class="countdown">${left} мин</div><div class="muted small">до конца пары${hint}</div>`;
       const gap = phase === "whole" ? "" :
         `<b class="progress-gap" style="left:${(HALF / len) * 100}%;width:${(BREAK / len) * 100}%"></b>`;
       bar = `<div class="progress"><i style="width:${pct}%"></i>${gap}</div>`;
