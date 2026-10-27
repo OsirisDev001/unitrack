@@ -2,6 +2,7 @@ import {
   DEFAULT_LIMIT, normalizeSkips, semesterStats, semesterOf, groupBySemester, normalizeSchedule,
   lessonStatus, nextLesson, subjectsFrom, taskBucket, BUCKETS, sortTasks, relativeDue, sameDay,
   pluralHours, pluralPairs, lessonPhase, HALF, BREAK,
+  normalizeTeachers, mondayOf, addDays, isoDate, buildWeek, weekLessons, forecastWeek, weekLabel,
 } from "./logic.js";
 import { demoBackend } from "./demo.js";
 import {
@@ -35,6 +36,10 @@ const api = tauri
       checkUpdate: () => tauri.invoke("check_update"),
       installUpdate: (url) => tauri.invoke("install_update", { url }),
       version: () => window.__TAURI__.app.getVersion(),
+      fetchWeek: (monday, sunday) => tauri.invoke("fetch_week", { monday, sunday }),
+      cachedWeek: (monday) => tauri.invoke("cached_week", { monday }),
+      fetchTeachers: () => tauri.invoke("fetch_teachers"),
+      cachedTeachers: () => tauri.invoke("cached_teachers"),
     }
   : demoBackend();
 
@@ -44,7 +49,12 @@ const state = {
   view: "today",
   username: null,
   skips: [],
-  days: [],
+  days: [],            // текущая + следующая неделя — для «Сегодня» и подсказок
+  cabinetRaw: null,    // расписание из кабинета (запасной источник)
+  weekRaw: new Map(),  // понедельник → ответ публичного API
+  weekFetched: new Set(),
+  teachers: new Map(),
+  weekStart: null,     // какая неделя открыта в «Расписании»
   tasks: [],
   settings: { limit: DEFAULT_LIMIT },
   selectedDay: null,
@@ -95,7 +105,15 @@ const saveSettings = () => api.save("settings", JSON.stringify(state.settings));
 async function loadCache() {
   const [sk, sc] = await Promise.all([api.cached("getSkips"), api.cached("getStudentSchedule")]);
   if (sk) try { state.skips = normalizeSkips(JSON.parse(sk)); } catch {}
-  if (sc) try { state.days = normalizeSchedule(JSON.parse(sc)); } catch {}
+  if (sc) try { state.cabinetRaw = JSON.parse(sc); } catch {}
+  const tc = await api.cachedTeachers?.();
+  if (tc) try { state.teachers = normalizeTeachers(JSON.parse(tc)); } catch {}
+  const cur = mondayOf(new Date());
+  await Promise.all([addDays(cur, -7), cur, addDays(cur, 7)].map(async (m) => {
+    const raw = await api.cachedWeek?.(isoDate(m));
+    if (raw) try { state.weekRaw.set(isoDate(m), JSON.parse(raw)); } catch {}
+  }));
+  rebuildDays();
   const st = await Promise.all(STUDY_METHODS.map((m) => api.cached(m)));
   STUDY_METHODS.forEach((m, i) => { if (st[i]) try { state.study[m] = JSON.parse(st[i]); } catch {} });
 }
@@ -118,8 +136,9 @@ async function refresh() {
   const errors = [];
   if (sk.status === "fulfilled") state.skips = normalizeSkips(JSON.parse(sk.value));
   else errors.push(String(sk.reason));
-  if (sc.status === "fulfilled") state.days = normalizeSchedule(JSON.parse(sc.value));
+  if (sc.status === "fulfilled") state.cabinetRaw = JSON.parse(sc.value);
   else errors.push(String(sc.reason));
+  rebuildDays();
 
   if (errors.some((e) => e.includes("Нужно войти") || e.includes("Неверный логин"))) {
     showLogin(errors[0]);
@@ -131,7 +150,69 @@ async function refresh() {
     api.save("last_sync", String(state.lastSync));
   }
   renderAll();
+  refreshWeeks();
   if (!errors.length) refreshStudy();
+}
+
+// ---------- недели расписания ----------
+
+const currentMonday = () => mondayOf(new Date());
+
+/** Дни недели: публичное расписание → кабинет → для следующей недели прогноз по текущей. */
+function weekDays(monday, allowForecast = true) {
+  const key = isoDate(monday);
+  const pub = state.weekRaw.has(key) ? normalizeSchedule(state.weekRaw.get(key), state.teachers) : null;
+  const cab = state.cabinetRaw ? normalizeSchedule(state.cabinetRaw, state.teachers) : null;
+  const days = buildWeek(monday, pub, cab);
+  if (allowForecast && weekLessons(days) === 0 && +monday === +addDays(currentMonday(), 7)) {
+    const cur = weekDays(currentMonday(), false);
+    if (weekLessons(cur) > 0) return forecastWeek(cur);
+  }
+  return days;
+}
+
+function rebuildDays() {
+  const cur = currentMonday();
+  state.days = [...weekDays(cur), ...weekDays(addDays(cur, 7))];
+}
+
+/** Неделю показываем сразу из сохранённого, а с сайта обновляем: свежие — всегда, старые — если ещё не скачаны. */
+async function loadWeek(monday) {
+  if (!api.fetchWeek) return;
+  const key = isoDate(monday);
+  if (!state.weekRaw.has(key)) {
+    const raw = await api.cachedWeek(key);
+    if (raw) try { state.weekRaw.set(key, JSON.parse(raw)); renderWeekChange(); } catch {}
+  }
+  const recent = monday >= addDays(currentMonday(), -7);
+  if (state.weekFetched.has(key) || (!recent && state.weekRaw.has(key))) return;
+  state.weekFetched.add(key);
+  state.weekLoading = key;
+  if (+monday === +state.weekStart) renderSchedule();
+  try {
+    state.weekRaw.set(key, JSON.parse(await api.fetchWeek(key, isoDate(addDays(monday, 6)))));
+  } catch {
+    state.weekFetched.delete(key); // нет сети — попробуем в следующий раз
+  } finally {
+    if (state.weekLoading === key) state.weekLoading = null;
+    renderWeekChange();
+  }
+}
+
+function renderWeekChange() {
+  rebuildDays();
+  renderSchedule();
+  renderToday();
+}
+
+async function refreshWeeks() {
+  if (!api.fetchTeachers) return;
+  try { state.teachers = normalizeTeachers(JSON.parse(await api.fetchTeachers())); } catch {}
+  state.weekFetched.clear();
+  const cur = currentMonday();
+  await Promise.all([cur, addDays(cur, 7)].map(loadWeek));
+  if (state.weekStart && ![+cur, +addDays(cur, 7)].includes(+state.weekStart)) loadWeek(state.weekStart);
+  renderWeekChange();
 }
 
 // ---------- вход ----------
@@ -182,6 +263,7 @@ function showView(view) {
     $$(".nav-btn").forEach((b) => b.classList.toggle("active", b.dataset.view === navView));
     $$(".view").forEach((v) => v.classList.toggle("active", v.dataset.view === view));
     if (view === "detail") renderDetail();
+    if (view === "schedule" && state.weekStart && +state.weekStart !== +currentMonday()) openWeek(currentMonday());
     movePill();
     window.scrollTo({ top: 0 });
     animateIn($(`.view[data-view="${view}"]`));
@@ -278,13 +360,13 @@ function typeTag(type) {
 
 function lessonHTML(day, l, now) {
   const st = lessonStatus(day, l, now);
-  return `<div class="lesson ${st}">
+  return `<div class="lesson ${st} ${l.forecast ? "forecast" : ""}">
     <div class="lesson-time">${esc(l.start)}<span>${esc(l.end)}</span></div>
     <div>
       <div class="lesson-title">${typeTag(l.type)}${esc(l.title)}</div>
       <div class="lesson-meta">
         ${l.room ? `<span>ауд. ${esc(l.room)}${l.address ? `, ${esc(l.address)}` : ""}</span>` : ""}
-        ${l.teacher ? `<span>${esc(l.teacher)}</span>` : ""}
+        ${l.teacher ? `<span>${esc(l.teacher)}${l.teacherPost ? `<em class="post">, ${esc(l.teacherPost.charAt(0).toLowerCase() + l.teacherPost.slice(1))}</em>` : ""}</span>` : ""}
         ${l.subgroup ? `<span class="sub">подгр. ${esc(l.subgroup.split(".").slice(-2).join("."))}</span>` : ""}
       </div>
     </div>
@@ -363,7 +445,7 @@ function renderToday(now = new Date()) {
         ? `<div class="countdown">${until >= 60 ? `${Math.floor(until / 60)} ч ${until % 60} мин` : `${until} мин`}</div><div class="muted small">до начала, в ${esc(l.start)}</div>`
         : `<div class="countdown">${esc(l.start)}</div>`;
     } else {
-      label = `<div class="next-label">Следующая пара</div>`;
+      label = `<div class="next-label">Следующая пара${l.forecast ? ` · <span class="pre">предварительно</span>` : ""}</div>`;
       big = `<div class="countdown">${esc(l.start)}</div><div class="muted small">${fmtDay(day.date, { weekday: "long", day: "numeric", month: "long" })}</div>`;
     }
     nc.html = `${label}
@@ -403,34 +485,67 @@ function renderToday(now = new Date()) {
 
 // ---------- рендер: расписание ----------
 
+const MAX_BACK_WEEKS = 60;
+
+function weekSub(monday) {
+  const diff = Math.round((monday - currentMonday()) / (7 * 86400_000));
+  if (diff === 0) return "эта неделя";
+  if (diff === 1) return "следующая неделя";
+  if (diff === -1) return "прошлая неделя";
+  const n = -diff;
+  return `${n} ${n % 10 === 1 && n % 100 !== 11 ? "неделю" : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 12 || n % 100 > 14) ? "недели" : "недель"} назад`;
+}
+
 function renderSchedule(now = new Date()) {
-  const strip = $("#day-strip");
-  if (!state.days.length) {
-    strip.html = "";
-    $("#day-lessons").html = `<div class="empty">Расписание появится после первого обновления.</div>`;
-    return;
-  }
-  if (!state.selectedDay || !state.days.some((d) => +d.date === state.selectedDay)) {
-    const t = state.days.find((d) => sameDay(d.date, now)) || state.days.find((d) => d.date > now) || state.days[0];
+  const cur = mondayOf(now);
+  if (!state.weekStart) state.weekStart = cur;
+  const monday = state.weekStart;
+  const days = weekDays(monday);
+  const forecast = days.some((d) => d.forecast);
+
+  $("#week-label").textContent = weekLabel(monday);
+  $("#week-sub").html = esc(weekSub(monday)) + (forecast ? ` · <span class="pre">предварительно</span>` : "");
+  $("#week-prev").disabled = monday <= addDays(cur, -7 * MAX_BACK_WEEKS);
+  $("#week-next").disabled = monday >= addDays(cur, 7);
+  $("#week-today").classList.toggle("hidden", +monday === +cur);
+
+  // Воскресенье показываем, только если в него есть пары.
+  const shown = days.filter((d, i) => i < 6 || d.lessons.length);
+  if (!shown.some((d) => +d.date === state.selectedDay)) {
+    const t = shown.find((d) => sameDay(d.date, now)) || shown.find((d) => d.date > now && d.lessons.length) || shown.find((d) => d.lessons.length) || shown[0];
     state.selectedDay = +t.date;
   }
-  strip.html = state.days.map((d) => `
-    <button class="day-chip ${sameDay(d.date, now) ? "today" : ""} ${+d.date === state.selectedDay ? "active" : ""} ${d.lessons.length ? "" : "empty-day"}"
+  const strip = $("#day-strip");
+  strip.style.setProperty("--cols", shown.length);
+  strip.html = shown.map((d) => `
+    <button class="day-chip ${sameDay(d.date, now) ? "today" : ""} ${+d.date === state.selectedDay ? "active" : ""} ${d.lessons.length ? "" : "empty-day"} ${d.forecast ? "forecast" : ""}"
       role="tab" aria-selected="${+d.date === state.selectedDay}" data-day="${+d.date}">
       <small>${fmtDay(d.date, { weekday: "short" })}</small><b>${d.date.getDate()}</b><small>${d.lessons.length ? pluralPairs(d.lessons.length) : "выходной"}</small>
     </button>`).join("");
-  const day = state.days.find((d) => +d.date === state.selectedDay);
-  $("#day-lessons").html = day.lessons.length
-    ? day.lessons.map((l) => lessonHTML(day, l, now)).join("")
-    : `<div class="empty">В этот день пар нет.</div>`;
-  strip.querySelector(".active")?.scrollIntoView({ inline: "center", block: "nearest" });
+  const day = shown.find((d) => +d.date === state.selectedDay);
+  const loading = state.weekLoading === isoDate(monday) && !weekLessons(days);
+  $("#day-lessons").html = loading
+    ? `<div class="empty">Загружаю неделю…</div>`
+    : (day.forecast ? `<div class="pre-note">Предварительно: сайт ещё не выложил эту неделю, показана копия текущей.</div>` : "") +
+      (day.lessons.length ? day.lessons.map((l) => lessonHTML(day, l, now)).join("") : `<div class="empty">В этот день пар нет.</div>`);
 }
+
+function openWeek(monday) {
+  state.weekStart = monday;
+  state.selectedDay = null;
+  renderSchedule();
+  loadWeek(monday);
+}
+
 $("#day-strip").addEventListener("click", (e) => {
   const b = e.target.closest("[data-day]");
   if (!b) return;
   state.selectedDay = Number(b.dataset.day);
   renderSchedule();
 });
+$("#week-prev").addEventListener("click", () => openWeek(addDays(state.weekStart, -7)));
+$("#week-next").addEventListener("click", () => openWeek(addDays(state.weekStart, 7)));
+$("#week-today").addEventListener("click", () => openWeek(currentMonday()));
 
 // ---------- рендер: задачи ----------
 
@@ -600,6 +715,7 @@ $("#limit-input").addEventListener("change", (e) => {
 $("#logout-btn").addEventListener("click", async () => {
   await api.logout();
   state.skips = []; state.days = []; state.lastSync = null; state.username = null;
+  state.cabinetRaw = null; state.weekRaw.clear(); state.weekFetched.clear(); state.weekStart = null;
   api.save("last_sync", "");
   showLogin();
 });

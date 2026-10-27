@@ -85,3 +85,32 @@ test("половины пары и перерыв", async () => {
   assert.deepEqual(lessonPhase(l, 9 * 60 + 45), { phase: "second", left: 40 });
   assert.deepEqual(lessonPhase({ startMin: 600, endMin: 690 }, 610), { phase: "whole", left: 80 });
 });
+
+test("недели: понедельник, 7 дней, прогноз и полные ФИО", async () => {
+  const m = await import("../src/logic.js");
+  const tue = new Date(2026, 9, 27); // вторник 27 октября
+  const mon = m.mondayOf(tue);
+  assert.equal(m.isoDate(mon), "2026-10-26");
+  assert.equal(m.isoDate(m.mondayOf(new Date(2026, 10, 1))), "2026-10-26"); // воскресенье → тот же понедельник
+
+  const teachers = m.normalizeTeachers({ items: [{ id: "130544", surname: "Бурба", name: "Александр", patronym: "Владимирович", post: "ст. преп." }] });
+  const raw = { days: [{ date: "2026-10-27", lessons: [
+    { timeStart: "09:00", timeEnd: "10:25", title: "Скрипты", teacher: { id: 130544, fullname: "Бурба А.В.", post: "" } },
+    { timeStart: "11:40", timeEnd: "13:05", title: "Физра", teacher: { id: 1, fullname: "Войтишкин В.Л.", post: "доц." } },
+  ] }] };
+  const days = m.normalizeSchedule(raw, teachers);
+  assert.equal(days[0].lessons[0].teacher, "Бурба Александр Владимирович");
+  assert.equal(days[0].lessons[0].teacherPost, "ст. преп.");
+  assert.equal(days[0].lessons[1].teacher, "Войтишкин В.Л."); // нет в справочнике — как прислал сайт
+
+  const week = m.buildWeek(mon, days);
+  assert.equal(week.length, 7);
+  assert.equal(m.weekLessons(week), 2);
+  assert.equal(week[1].lessons.length, 2);
+  assert.equal(week[0].lessons.length, 0);
+
+  const next = m.forecastWeek(week);
+  assert.equal(m.isoDate(next[1].date), "2026-11-03");
+  assert.ok(next[1].forecast && next[1].lessons.every((l) => l.forecast));
+  assert.ok(!week[1].lessons[0].forecast); // исходная неделя не испорчена
+});

@@ -96,7 +96,17 @@ function minutes(hhmm) {
   return h * 60 + m;
 }
 
-export function normalizeSchedule(raw) {
+/** Преподаватели из публичного API ГрГУ: id → { name: «Фамилия Имя Отчество», post }. */
+export function normalizeTeachers(raw) {
+  const map = new Map();
+  for (const t of Array.isArray(raw?.items) ? raw.items : []) {
+    const name = [t.surname, t.name, t.patronym].map((x) => String(x || "").trim()).filter(Boolean).join(" ");
+    if (t.id && name) map.set(String(t.id), { name, post: String(t.post || "").trim() });
+  }
+  return map;
+}
+
+export function normalizeSchedule(raw, teachers = new Map()) {
   const days = Array.isArray(raw?.days) ? raw.days : [];
   return days
     .map((d) => ({
@@ -109,8 +119,9 @@ export function normalizeSchedule(raw) {
           endMin: minutes(l.timeEnd),
           title: String(l.title || "").trim(),
           type: String(l.type || "").trim(),
-          teacher: l.teacher?.fullname || "",
-          teacherPost: l.teacher?.post || "",
+          // Полное ФИО из справочника, если нашли преподавателя по id; иначе как прислал сайт.
+          teacher: teachers.get(String(l.teacher?.id ?? ""))?.name || l.teacher?.fullname || "",
+          teacherPost: l.teacher?.post || teachers.get(String(l.teacher?.id ?? ""))?.post || "",
           room: l.room || "",
           address: l.address || "",
           subgroup: l.subgroup?.id && l.subgroup.id !== "0" ? l.subgroup.title : "",
@@ -120,6 +131,48 @@ export function normalizeSchedule(raw) {
     }))
     .filter((d) => !Number.isNaN(d.date.getTime()))
     .sort((a, b) => a.date - b.date);
+}
+
+// ---------- недели ----------
+
+export const addDays = (d, n) => new Date(d.getFullYear(), d.getMonth(), d.getDate() + n);
+/** Понедельник недели, в которую попадает дата. */
+export const mondayOf = (d) => addDays(new Date(d.getFullYear(), d.getMonth(), d.getDate()), -((d.getDay() + 6) % 7));
+export const isoDate = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
+/**
+ * Ровно 7 дней недели с понедельника. Пары берутся из первого источника, где этот день есть:
+ * так публичное расписание дополняется данными из кабинета, а пустые дни становятся выходными.
+ */
+export function buildWeek(monday, ...sources) {
+  return Array.from({ length: 7 }, (_, i) => {
+    const date = addDays(monday, i);
+    for (const src of sources) {
+      const hit = (src || []).find((d) => sameDay(d.date, date));
+      if (hit) return { ...hit, date };
+    }
+    return { date, lessons: [] };
+  });
+}
+
+export const weekLessons = (week) => week.reduce((n, d) => n + d.lessons.length, 0);
+
+/** Прогноз: та же неделя, что и образец, сдвинутая на 7 дней, с пометкой «предварительно». */
+export function forecastWeek(sample) {
+  return sample.map((d) => ({
+    date: addDays(d.date, 7),
+    forecast: true,
+    lessons: d.lessons.map((l) => ({ ...l, forecast: true })),
+  }));
+}
+
+/** Подпись недели: «26 окт – 1 нояб». */
+export function weekLabel(monday) {
+  const sun = addDays(monday, 6);
+  const f = (d, o) => d.toLocaleDateString("ru-RU", o).replace(".", "");
+  return monday.getMonth() === sun.getMonth()
+    ? `${monday.getDate()}–${f(sun, { day: "numeric", month: "short" })}`
+    : `${f(monday, { day: "numeric", month: "short" })} – ${f(sun, { day: "numeric", month: "short" })}`;
 }
 
 /** Статус пары относительно момента now: past | now | next | later */

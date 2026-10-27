@@ -281,10 +281,10 @@ input[type="datetime-local"]::-webkit-calendar-picker-indicator { filter: invert
 .sub { color: var(--accent); font-weight: 700; }
 
 /* полоса дней */
-.day-strip { display: flex; gap: 8px; overflow-x: auto; padding: 2px 2px 8px; margin-bottom: 14px; scrollbar-width: none; }
+.day-strip { display: grid; grid-template-columns: repeat(var(--cols, 6), minmax(0, 1fr)); gap: 8px; padding: 2px 2px 8px; margin-bottom: 14px; }
 .day-strip::-webkit-scrollbar { display: none; }
 .day-chip {
-  flex: none; display: grid; justify-items: center; gap: 2px; min-width: 62px; padding: 10px 10px; border-radius: 16px;
+  display: grid; justify-items: center; gap: 2px; min-width: 0; padding: 10px 4px; border-radius: 16px;
   border: 1px solid var(--line); background: var(--surface); cursor: pointer; color: var(--muted); font-weight: 600;
   transition: transform 0.4s var(--spring), background 0.25s, color 0.25s, border-color 0.25s;
 }
@@ -530,3 +530,17 @@ dialog::backdrop { background: rgba(8, 6, 12, 0.65); backdrop-filter: blur(4px);
 .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); margin-left: 6px; box-shadow: 0 0 10px var(--accent-glow); animation: pop 0.5s var(--spring); }
 .icon-btn { position: relative; }
 .icon-btn .dot { position: absolute; top: 7px; right: 7px; margin: 0; }
+
+/* ---------- недели расписания ---------- */
+.week-nav { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: -8px 0 14px; }
+.week-title { display: grid; justify-items: center; gap: 2px; text-align: center; }
+.week-title b { font-size: 17px; font-weight: 800; }
+.week-title small { color: var(--muted); font-size: 12px; }
+.week-nav .icon-btn:disabled { opacity: 0.3; pointer-events: none; }
+.ico-flip { transform: scaleX(-1); }
+.pre { color: var(--accent); font-weight: 700; }
+.pre-note { font-size: 13px; color: var(--accent); background: rgba(199, 179, 255, 0.08); border: 1px dashed rgba(199, 179, 255, 0.35); border-radius: 12px; padding: 9px 12px; margin-bottom: 6px; }
+.lesson.forecast, .day-chip.forecast:not(.active) { opacity: 0.6; }
+.day-chip.forecast { border-style: dashed; }
+.lesson-meta .post { font-style: normal; opacity: 0.75; }
+@media (max-width: 420px) { .day-chip small { font-size: 10px; } .day-chip b { font-size: 17px; } }

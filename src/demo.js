@@ -3,9 +3,18 @@
 
 const L = (timeStart, timeEnd, title, type, fullname, room, address = "Гаспадарчая, 23", sub = "") => ({
   timeStart, timeEnd, title, type, room, address, label: "",
-  teacher: { fullname, post: "" },
+  teacher: { id: DEMO_IDS[fullname] || "0", fullname, post: "" },
   subgroup: sub ? { id: "1", title: `СДП-ИСИТ-251.${sub}` } : { id: "0", title: "" },
 });
+
+const DEMO_TEACHERS = [
+  ["Ляликова", "Валентина", "Ивановна", "доц."], ["Саврас", "Светлана", "Александровна", "ст. преп."],
+  ["Локтевич", "Виктор", "Михайлович", "ст. преп."], ["Войтишкин", "Владимир", "Леонидович", "ст. преп."],
+  ["Игнатенко", "Игорь", "Иванович", "доц."], ["Белов", "Игорь", "Петрович", "ст. преп."],
+  ["Морозенко", "Анна", "Александровна", "доц."], ["Козловская", "Наталья", "Юрьевна", "доц."],
+  ["Бурба", "Александр", "Владимирович", "ст. преп."], ["Анисько", "Пётр", "Евгеньевич", "доц."],
+].map(([surname, name, patronym, post], i) => ({ id: String(100 + i), surname, name, patronym, post }));
+const DEMO_IDS = Object.fromEntries(DEMO_TEACHERS.map((t) => [`${t.surname} ${t.name[0]}.${t.patronym[0]}.`, t.id]));
 
 const WEEK = [
   [
@@ -34,19 +43,22 @@ const WEEK = [
   [],
 ];
 
+const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
+/** Неделя с понедельника monday ("YYYY-MM-DD"); будущее сайт ещё «не выложил». */
+function demoWeek(monday) {
+  const [y, m, d0] = monday.split("-").map(Number);
+  const now = new Date();
+  const curMon = new Date(now.getFullYear(), now.getMonth(), now.getDate() - ((now.getDay() + 6) % 7));
+  if (new Date(y, m - 1, d0) > curMon) return { count: 0, days: [] };
+  const days = [];
+  for (let i = 0; i < 5; i++) days.push({ num: String(i + 1), date: iso(new Date(y, m - 1, d0 + i)), count: WEEK[i].length, lessons: WEEK[i] });
+  return { count: days.length, days };
+}
+
 function demoSchedule() {
   const now = new Date();
-  const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - ((now.getDay() + 6) % 7));
-  const days = [];
-  for (let w = 0; w < 2; w++) {
-    for (let i = 0; i < 6; i++) {
-      const d = new Date(monday);
-      d.setDate(monday.getDate() + w * 7 + i);
-      const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-      days.push({ num: String(i + 1), date: iso, count: WEEK[i].length, lessons: WEEK[i] });
-    }
-  }
-  return { count: days.length, days };
+  return demoWeek(iso(new Date(now.getFullYear(), now.getMonth(), now.getDate() - ((now.getDay() + 6) % 7))));
 }
 
 const P = "прогул";
@@ -120,6 +132,10 @@ export function demoBackend() {
       return JSON.stringify(DEMO_STUDY[m] ?? null);
     },
     cached: async () => null,
+    fetchWeek: async (monday) => { await wait(500); return JSON.stringify(demoWeek(monday)); },
+    cachedWeek: async () => null,
+    fetchTeachers: async () => JSON.stringify({ count: DEMO_TEACHERS.length, items: DEMO_TEACHERS }),
+    cachedTeachers: async () => null,
     load: async (k) => get(k),
     save: async (k, v) => set(k, v),
     syncInfo: async () => ({ role: "server", ip: "192.168.0.5", port: 47321, pin: "482913" }),

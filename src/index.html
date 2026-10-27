@@ -72,7 +72,15 @@
 
       <!-- Расписание -->
       <section class="view" data-view="schedule">
-        <header class="view-head"><h1>Расписание</h1></header>
+        <header class="view-head">
+          <h1>Расписание</h1>
+          <button class="link hidden" id="week-today">К этой неделе</button>
+        </header>
+        <div class="week-nav">
+          <button class="icon-btn" id="week-prev" aria-label="Прошлая неделя"><span class="ico ico-back"></span></button>
+          <div class="week-title"><b id="week-label"></b><small id="week-sub"></small></div>
+          <button class="icon-btn" id="week-next" aria-label="Следующая неделя"><span class="ico ico-back ico-flip"></span></button>
+        </div>
         <div class="day-strip" id="day-strip" role="tablist"></div>
         <div id="day-lessons" class="rise"></div>
       </section>

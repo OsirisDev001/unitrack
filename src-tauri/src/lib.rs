@@ -14,6 +14,7 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use tauri::{Manager, State};
 
+mod public;
 mod sync;
 
 const LOGIN_URL: &str = "https://edu.grsu.by/login/index.php";
@@ -105,7 +106,7 @@ fn new_client() -> reqwest::Client {
 }
 
 /// Понятная ошибка сети с технической причиной в скобках — чтобы по скрину было видно, что именно не так.
-fn net_err(e: reqwest::Error) -> String {
+pub(crate) fn net_err(e: reqwest::Error) -> String {
     let host = e.url().and_then(|u| u.host_str()).unwrap_or("сайт").to_string();
     let mut chain = Vec::new();
     let mut src: Option<&dyn std::error::Error> = std::error::Error::source(&e);
@@ -347,10 +348,34 @@ fn saved_username(state: State<'_, AppState>) -> Option<String> {
 #[tauri::command]
 fn logout(state: State<'_, AppState>) {
     secrets::clear(&state.data_dir);
+    public::forget_personal(&state.data_dir);
     state.set_client(new_client());
     for m in ALLOWED_METHODS {
         let _ = fs::remove_file(state.data_dir.join(format!("cache_{m}.json")));
     }
+}
+
+/// Личное расписание за неделю из публичного API ГрГУ (пароль туда не уходит, только логин).
+#[tauri::command]
+async fn fetch_week(state: State<'_, AppState>, monday: String, sunday: String) -> Result<String, String> {
+    let login = secrets::load(&state.data_dir).ok_or("Нужно войти")?.username;
+    public::fetch_week(&state.data_dir, &login, &monday, &sunday).await
+}
+
+#[tauri::command]
+fn cached_week(state: State<'_, AppState>, monday: String) -> Option<String> {
+    public::cached_week(&state.data_dir, &monday)
+}
+
+/// Справочник преподавателей с полными ФИО.
+#[tauri::command]
+async fn fetch_teachers(state: State<'_, AppState>) -> Result<String, String> {
+    public::teachers(&state.data_dir).await
+}
+
+#[tauri::command]
+fn cached_teachers(state: State<'_, AppState>) -> Option<String> {
+    public::cached_teachers(&state.data_dir)
 }
 
 /// Тянет данные с сайта. При протухшей сессии логинится заново и повторяет запрос.
@@ -456,6 +481,24 @@ fn version_newer(latest: &str, current: &str) -> bool {
     parse(latest) > parse(current)
 }
 
+/// Файл именно этой версии: `UniTrack-0.2.5.apk` / `UniTrack-0.2.5-setup.exe`.
+/// Если в релиз случайно попали файлы другой версии — они игнорируются.
+fn pick_asset(assets: &serde_json::Value, version: &str) -> Option<String> {
+    if version.is_empty() {
+        return None;
+    }
+    let want = if cfg!(target_os = "android") {
+        format!("UniTrack-{version}.apk")
+    } else {
+        format!("UniTrack-{version}-setup.exe")
+    };
+    assets.as_array()?.iter().find_map(|x| {
+        let name = x["name"].as_str()?;
+        let url = x["browser_download_url"].as_str()?;
+        (name == want && url.ends_with(&format!("/{want}")) && release_asset_allowed(url)).then(|| url.to_string())
+    })
+}
+
 fn release_asset_allowed(url: &str) -> bool {
     url.starts_with(&format!("https://github.com/{REPO}/releases/download/"))
 }
@@ -482,13 +525,7 @@ async fn check_update(app: tauri::AppHandle) -> Result<UpdateInfo, String> {
     }
     let v: serde_json::Value = serde_json::from_str(&resp.text().await.map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
     let latest = v["tag_name"].as_str().unwrap_or("").trim_start_matches('v').to_string();
-    let want = if cfg!(target_os = "android") { ".apk" } else { "-setup.exe" };
-    let asset = v["assets"].as_array().and_then(|a| {
-        a.iter()
-            .filter_map(|x| x["browser_download_url"].as_str())
-            .find(|u| u.ends_with(want) && release_asset_allowed(u))
-            .map(String::from)
-    });
+    let asset = pick_asset(&v["assets"], &latest);
     Ok(UpdateInfo {
         available: !latest.is_empty() && version_newer(&latest, &current),
         current,
@@ -630,7 +667,11 @@ pub fn run() {
             sync_info,
             sync_now,
             check_update,
-            install_update
+            install_update,
+            fetch_week,
+            cached_week,
+            fetch_teachers,
+            cached_teachers
         ])
         .run(tauri::generate_context!())
         .expect("ошибка запуска UniTrack");
@@ -677,6 +718,19 @@ mod tests {
         assert!(release_asset_allowed("https://github.com/OsirisDev001/unitrack/releases/download/v0.2.0/UniTrack-setup.exe"));
         assert!(!release_asset_allowed("https://github.com/evil/unitrack/releases/download/v1/UniTrack-setup.exe"));
         assert!(!release_asset_allowed("https://evil.com/OsirisDev001/unitrack/releases/download/x.exe"));
+
+        // Наслойка версий: в релизе 0.2.4 лежат ещё файлы 0.2.3 и файл без имени.
+        let base = "https://github.com/OsirisDev001/unitrack/releases/download/v0.2.4";
+        let assets = serde_json::json!([
+            { "name": "", "browser_download_url": format!("{base}/") },
+            { "name": "UniTrack-0.2.3-setup.exe", "browser_download_url": format!("{base}/UniTrack-0.2.3-setup.exe") },
+            { "name": "UniTrack-0.2.3.apk", "browser_download_url": format!("{base}/UniTrack-0.2.3.apk") },
+            { "name": "UniTrack-0.2.4-setup.exe", "browser_download_url": format!("{base}/UniTrack-0.2.4-setup.exe") },
+            { "name": "UniTrack-0.2.4.apk", "browser_download_url": format!("{base}/UniTrack-0.2.4.apk") },
+        ]);
+        let picked = pick_asset(&assets, "0.2.4").unwrap();
+        assert!(picked.ends_with("UniTrack-0.2.4-setup.exe") || picked.ends_with("UniTrack-0.2.4.apk"));
+        assert_eq!(pick_asset(&assets, "0.2.5"), None);
     }
 
     #[test]
