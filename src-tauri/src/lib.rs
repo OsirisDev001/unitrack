@@ -374,6 +374,32 @@ async fn fetch_teachers(state: State<'_, AppState>) -> Result<String, String> {
 }
 
 #[tauri::command]
+async fn lookup_student(login: String) -> Result<String, String> {
+    public::lookup_student(&login).await
+}
+
+#[tauri::command]
+async fn fetch_schedule(state: State<'_, AppState>, kind: String, id: String, monday: String, sunday: String) -> Result<String, String> {
+    let kind = public::Kind::parse(&kind).ok_or("Плохой тип расписания")?;
+    public::fetch_schedule(&state.data_dir, kind, &id, &monday, &sunday).await
+}
+
+#[tauri::command]
+fn cached_schedule(state: State<'_, AppState>, kind: String, id: String, monday: String) -> Option<String> {
+    public::cached_schedule(&state.data_dir, public::Kind::parse(&kind)?, &id, &monday)
+}
+
+#[tauri::command]
+async fn fetch_faculties(state: State<'_, AppState>) -> Result<String, String> {
+    public::faculties(&state.data_dir).await
+}
+
+#[tauri::command]
+async fn fetch_groups(state: State<'_, AppState>, faculty: String, course: u8) -> Result<String, String> {
+    public::groups(&state.data_dir, &faculty, course).await
+}
+
+#[tauri::command]
 fn cached_teachers(state: State<'_, AppState>) -> Option<String> {
     public::cached_teachers(&state.data_dir)
 }
@@ -424,7 +450,7 @@ fn save_data(state: State<'_, AppState>, key: String, value: String) -> Result<(
     if !RE_KEY.is_match(&key) {
         return Err("Плохой ключ".into());
     }
-    let _guard = (key == "tasks").then(|| sync::TASKS_LOCK.lock().unwrap());
+    let _guard = sync::COLLECTIONS.contains(&key.as_str()).then(|| sync::TASKS_LOCK.lock().unwrap());
     let path = state.data_dir.join(format!("data_{key}.json"));
     let tmp = path.with_extension("tmp");
     fs::write(&tmp, value).map_err(|e| e.to_string())?;
@@ -671,7 +697,12 @@ pub fn run() {
             fetch_week,
             cached_week,
             fetch_teachers,
-            cached_teachers
+            cached_teachers,
+            lookup_student,
+            fetch_schedule,
+            cached_schedule,
+            fetch_faculties,
+            fetch_groups
         ])
         .run(tauri::generate_context!())
         .expect("ошибка запуска UniTrack");

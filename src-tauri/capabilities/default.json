@@ -15,6 +15,9 @@
         },
         {
           "url": "https://github.com/OsirisDev001/unitrack/*"
+        },
+        {
+          "url": "mailto:*"
         }
       ]
     }

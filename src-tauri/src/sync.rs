@@ -26,23 +26,54 @@ const TOMBSTONE_TTL_MS: f64 = 60.0 * 24.0 * 3600.0 * 1000.0;
 /// Один замок на файл задач: его пишут и интерфейс, и сервер синхронизации.
 pub static TASKS_LOCK: Mutex<()> = Mutex::new(());
 
-pub fn tasks_path(dir: &Path) -> PathBuf {
-    dir.join("data_tasks.json")
+/// Что синхронизируется между устройствами. Всё по одним правилам: id + updated + «надгробия».
+pub const COLLECTIONS: &[&str] = &["tasks", "favorites"];
+
+fn coll_path(dir: &Path, name: &str) -> PathBuf {
+    dir.join(format!("data_{name}.json"))
 }
 
-pub fn read_tasks(dir: &Path) -> Vec<Value> {
-    fs::read_to_string(tasks_path(dir))
+pub fn read_coll(dir: &Path, name: &str) -> Vec<Value> {
+    fs::read_to_string(coll_path(dir, name))
         .ok()
         .and_then(|s| serde_json::from_str::<Vec<Value>>(&s).ok())
         .unwrap_or_default()
 }
 
-pub fn write_tasks(dir: &Path, tasks: &[Value]) -> Result<(), String> {
-    let path = tasks_path(dir);
+pub fn write_coll(dir: &Path, name: &str, items: &[Value]) -> Result<(), String> {
+    let path = coll_path(dir, name);
     let tmp = path.with_extension("tmp");
-    let json = serde_json::to_string(tasks).map_err(|e| e.to_string())?;
+    let json = serde_json::to_string(items).map_err(|e| e.to_string())?;
     fs::write(&tmp, json).map_err(|e| e.to_string())?;
     fs::rename(&tmp, &path).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+pub fn read_tasks(dir: &Path) -> Vec<Value> {
+    read_coll(dir, "tasks")
+}
+
+#[cfg(test)]
+pub fn write_tasks(dir: &Path, tasks: &[Value]) -> Result<(), String> {
+    write_coll(dir, "tasks", tasks)
+}
+
+/// Тело запроса: старые версии (0.2.5 и раньше) шлют просто массив задач,
+/// новые — объект { tasks: [...], favorites: [...] }.
+fn split_body(v: Value) -> Option<(BTreeMap<String, Vec<Value>>, bool)> {
+    match v {
+        Value::Array(tasks) => Some((BTreeMap::from([("tasks".to_string(), tasks)]), true)),
+        Value::Object(mut o) => {
+            let mut out = BTreeMap::new();
+            for name in COLLECTIONS {
+                if let Some(Value::Array(items)) = o.remove(*name) {
+                    out.insert(name.to_string(), items);
+                }
+            }
+            Some((out, false))
+        }
+        _ => None,
+    }
 }
 
 fn stamp(v: &Value) -> f64 {
@@ -219,18 +250,28 @@ pub fn start_server(dir: PathBuf, port: u16, on_change: impl Fn() + Send + 'stat
                 let _ = req.respond(tiny_http::Response::empty(400));
                 continue;
             }
-            let Ok(remote) = serde_json::from_str::<Vec<Value>>(&body) else {
+            let Some((remote, legacy)) = serde_json::from_str::<Value>(&body).ok().and_then(split_body) else {
                 let _ = req.respond(tiny_http::Response::empty(400));
                 continue;
             };
-            let merged = {
+            let merged: BTreeMap<String, Vec<Value>> = {
                 let _g = TASKS_LOCK.lock().unwrap();
-                let merged = merge(&read_tasks(&dir), &remote);
-                let _ = write_tasks(&dir, &merged);
-                merged
+                remote
+                    .into_iter()
+                    .map(|(name, items)| {
+                        let m = merge(&read_coll(&dir, &name), &items);
+                        let _ = write_coll(&dir, &name, &m);
+                        (name, m)
+                    })
+                    .collect()
             };
             on_change();
-            let out = serde_json::to_string(&merged).unwrap_or_else(|_| "[]".into());
+            let out = if legacy {
+                serde_json::to_string(&merged.get("tasks").cloned().unwrap_or_default())
+            } else {
+                serde_json::to_string(&merged)
+            }
+            .unwrap_or_else(|_| "[]".into());
             let _ = req.respond(tiny_http::Response::from_string(out).with_header(json_header.clone()));
         }
     });
@@ -262,9 +303,9 @@ pub async fn sync_with_port(dir: &Path, address: &str, pin: &str, port: u16) -> 
         return Err("Укажи адрес ноутбука".into());
     }
     let url = if addr.contains(':') { format!("http://{addr}/sync") } else { format!("http://{addr}:{port}/sync") };
-    let local = {
+    let local: BTreeMap<String, Vec<Value>> = {
         let _g = TASKS_LOCK.lock().unwrap();
-        read_tasks(dir)
+        COLLECTIONS.iter().map(|n| (n.to_string(), read_coll(dir, n))).collect()
     };
     let client = reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(4))
@@ -286,15 +327,18 @@ pub async fn sync_with_port(dir: &Path, address: &str, pin: &str, port: u16) -> 
         s => return Err(format!("Ноутбук ответил ошибкой {s}")),
     }
     let text = resp.text().await.map_err(|e| e.to_string())?;
-    let remote: Vec<Value> = serde_json::from_str(&text).map_err(|e| e.to_string())?;
-    let merged = merge(&local, &remote);
-    {
-        let _g = TASKS_LOCK.lock().unwrap();
+    // Старый ноутбук (0.2.5) ответит массивом задач — тогда избранное просто не синхронизируется.
+    let (remote, _) = serde_json::from_str::<Value>(&text)
+        .ok()
+        .and_then(split_body)
+        .ok_or("Ноутбук ответил непонятно")?;
+    let _g = TASKS_LOCK.lock().unwrap();
+    for (name, items) in &remote {
         // За время запроса интерфейс мог сохранить новые правки — сливаем и с ними.
-        let fresh = merge(&read_tasks(dir), &merged);
-        write_tasks(dir, &fresh)?;
-        Ok(fresh.iter().filter(|v| v.get("deleted").and_then(Value::as_bool) != Some(true)).count())
+        let fresh = merge(&read_coll(dir, name), &merge(local.get(name).map_or(&[][..], |v| v), items));
+        write_coll(dir, name, &fresh)?;
     }
+    Ok(read_coll(dir, "tasks").iter().filter(|v| v.get("deleted").and_then(Value::as_bool) != Some(true)).count())
 }
 
 #[cfg(test)]
@@ -345,6 +389,26 @@ mod tests {
         rx.recv_timeout(Duration::from_secs(2)).expect("ноутбук узнал об изменениях");
         assert_eq!(read_tasks(&laptop).len(), 2);
         assert_eq!(read_tasks(&phone).len(), 2);
+
+        // Избранное едет вместе с задачами.
+        write_coll(&phone, "favorites", &[json!({"id": "group:18137", "title": "ИСИТ-251", "updated": now})]).unwrap();
+        rt.block_on(sync_with_port(&phone, "127.0.0.1", &code, 47399)).unwrap();
+        assert_eq!(read_coll(&laptop, "favorites").len(), 1);
+
+        // Старый клиент (0.2.5) шлёт массив и получает массив — совместимость не сломана.
+        let old = rt.block_on(async {
+            reqwest::Client::new()
+                .post("http://127.0.0.1:47399/sync")
+                .header("X-UniTrack-Pin", code.as_str())
+                .body("[]")
+                .send()
+                .await
+                .unwrap()
+                .text()
+                .await
+                .unwrap()
+        });
+        assert!(serde_json::from_str::<Vec<Value>>(&old).unwrap().len() == 2);
         let _ = fs::remove_dir_all(&base);
     }
 

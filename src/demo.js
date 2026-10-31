@@ -56,6 +56,33 @@ function demoWeek(monday) {
   return { count: days.length, days };
 }
 
+/** Чужое расписание в демо: друг — сдвинутая версия моей недели, преподаватель — пары с группами. */
+function demoOther(kind, monday) {
+  const w = demoWeek(monday);
+  if (kind === "teacher") {
+    w.days = w.days.map((d, i) => ({ ...d, lessons: [
+      { ...L("09:00", "10:25", "Скриптовые языки программирования", "лаб.", "Бурба А.В.", "201", undefined, "3.2"), groups: [{ title: "СДП-ИСИТ-251" }] },
+      { ...L("11:40", "13:05", "Объектно-ориентир. проектиров. и программир.", "лаб.", "Бурба А.В.", "309"), groups: [{ title: "СДП-ИСИТ-252" }] },
+    ].slice(0, i % 2 ? 1 : 2) }));
+  } else {
+    w.days = w.days.map((d, i) => ({ ...d, lessons: WEEK[(i + 1) % 5].map((l) => ({ ...l })) }));
+  }
+  return w;
+}
+
+function demoChanged(w, monday) {
+  const now = new Date();
+  const cur = iso(new Date(now.getFullYear(), now.getMonth(), now.getDate() - ((now.getDay() + 6) % 7)));
+  if (monday !== cur || w.days.length < 3) return w;
+  const days = w.days.map((d) => ({ ...d, lessons: d.lessons.map((l) => ({ ...l })) }));
+  const tue = days[1].lessons;
+  const oop = tue.find((l) => l.title.startsWith("Объектно"));
+  if (oop) oop.room = "204";
+  const lab = tue.findIndex((l) => l.title === "Компьютерные сети" && l.type === "лаб.");
+  if (lab >= 0) days[2].lessons.push({ ...tue.splice(lab, 1)[0], timeStart: "16:40", timeEnd: "18:05" });
+  return { ...w, days };
+}
+
 function demoSchedule() {
   const now = new Date();
   return demoWeek(iso(new Date(now.getFullYear(), now.getMonth(), now.getDate() - ((now.getDay() + 6) % 7))));
@@ -132,10 +159,22 @@ export function demoBackend() {
       return JSON.stringify(DEMO_STUDY[m] ?? null);
     },
     cached: async () => null,
-    fetchWeek: async (monday) => { await wait(500); return JSON.stringify(demoWeek(monday)); },
-    cachedWeek: async () => null,
+    // В демо «сайт» отдаёт изменённую текущую неделю, а «сохранённая» — исходная: видно фишку изменений.
+    fetchWeek: async (monday) => { await wait(500); return JSON.stringify(demoChanged(demoWeek(monday), monday)); },
+    cachedWeek: async (monday) => JSON.stringify(demoWeek(monday)),
     fetchTeachers: async () => JSON.stringify({ count: DEMO_TEACHERS.length, items: DEMO_TEACHERS }),
     cachedTeachers: async () => null,
+    lookupStudent: async (login) => {
+      await wait(400);
+      if (!/^[A-Za-z0-9_.-]{2,64}$/.test(login)) throw new Error("Логин выглядит как Ivanov_II_25 — латиница, цифры и _");
+      return JSON.stringify({ id: 1, fullname: "Петров Пётр Петрович", studenttype: "Студент", grouptitle: "СДП-ИСИТ-252", nzach: "", k_sgryp: 2 });
+    },
+    fetchSchedule: async (kind, id, monday) => { await wait(400); return JSON.stringify(demoOther(kind, monday)); },
+    cachedSchedule: async () => null,
+    fetchFaculties: async () => JSON.stringify({ items: [
+      { id: "3", title: "Факультет математики и информатики" }, { id: "30", title: "Факультет экономики и управления" }, { id: "4673", title: "Физико-технический факультет" }] }),
+    fetchGroups: async (fac, course) => JSON.stringify({ items: fac !== "30" ? [{ id: `${fac}${course}`, title: `СДП-ПМИ-${27 - course}1` }] :
+      ["ИСИТ", "ЭУ", "ФиК", "М"].flatMap((sp, i) => [1, 2].map((n) => ({ id: `${course}${i}${n}`, title: `СДП-${sp}-${27 - course}${n}` }))).filter((g) => course <= 4) }),
     load: async (k) => get(k),
     save: async (k, v) => set(k, v),
     syncInfo: async () => ({ role: "server", ip: "192.168.0.5", port: 47321, pin: "482913" }),

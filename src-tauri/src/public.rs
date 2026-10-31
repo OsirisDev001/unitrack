@@ -10,6 +10,8 @@ const BASE: &str = "https://api.grsu.by/1.x/";
 const TEACHERS_TTL: Duration = Duration::from_secs(7 * 24 * 3600);
 
 static RE_ISO: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(\d{4})-(\d{2})-(\d{2})$").unwrap());
+static RE_ID: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[0-9]{1,12}$").unwrap());
+static RE_LOGIN: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[A-Za-z0-9_.\-]{2,64}$").unwrap());
 
 fn client() -> reqwest::Client {
     reqwest::Client::builder()
@@ -118,12 +120,129 @@ pub fn cached_teachers(dir: &Path) -> Option<String> {
     fs::read_to_string(dir.join("public_teachers.json")).ok()
 }
 
+// ---------- поиск и чужие расписания ----------
+
+/// Чьё расписание: студент (по id), группа или преподаватель.
+#[derive(Clone, Copy)]
+pub enum Kind {
+    Student,
+    Group,
+    Teacher,
+}
+
+impl Kind {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "student" => Some(Self::Student),
+            "group" => Some(Self::Group),
+            "teacher" => Some(Self::Teacher),
+            _ => None,
+        }
+    }
+    fn name(self) -> &'static str {
+        match self {
+            Self::Student => "student",
+            Self::Group => "group",
+            Self::Teacher => "teacher",
+        }
+    }
+}
+
+fn sched_file(dir: &Path, kind: Kind, id: &str, monday: &str) -> std::path::PathBuf {
+    dir.join(format!("sched_{}_{id}_{monday}.json", kind.name()))
+}
+
+/// Найти студента по логину: ФИО, группа, id для расписания.
+pub async fn lookup_student(login: &str) -> Result<String, String> {
+    let login = login.trim();
+    if !RE_LOGIN.is_match(login) {
+        return Err("Логин выглядит как Ivanov_II_25 — латиница, цифры и _".into());
+    }
+    let raw = get("app1/getStudent", &[("login", login.to_string())]).await?;
+    let v: serde_json::Value = serde_json::from_str(&raw).unwrap_or_default();
+    let found = match &v["id"] {
+        serde_json::Value::Number(n) => n.as_u64().unwrap_or(0) > 0,
+        serde_json::Value::String(s) => s != "0" && !s.is_empty(),
+        _ => false,
+    };
+    if !found {
+        return Err("Студента с таким логином нет".into());
+    }
+    Ok(raw)
+}
+
+/// Расписание студента / группы / преподавателя на неделю; сохраняется для офлайна.
+pub async fn fetch_schedule(dir: &Path, kind: Kind, id: &str, monday: &str, sunday: &str) -> Result<String, String> {
+    let (start, end) = match (api_date(monday), api_date(sunday)) {
+        (Some(a), Some(b)) => (a, b),
+        _ => return Err("Плохая дата недели".into()),
+    };
+    if !RE_ID.is_match(id) {
+        return Err("Плохой id".into());
+    }
+    let (path, key) = match kind {
+        Kind::Student => ("app1/getGroupSchedule", "studentId"),
+        Kind::Group => ("app1/getGroupSchedule", "groupId"),
+        Kind::Teacher => ("app1/getTeacherSchedule", "teacherId"),
+    };
+    let raw = get(path, &[(key, id.to_string()), ("dateStart", start), ("dateEnd", end)]).await?;
+    let _ = fs::write(sched_file(dir, kind, id, monday), &raw);
+    Ok(raw)
+}
+
+pub fn cached_schedule(dir: &Path, kind: Kind, id: &str, monday: &str) -> Option<String> {
+    api_date(monday)?;
+    RE_ID.is_match(id).then_some(())?;
+    fs::read_to_string(sched_file(dir, kind, id, monday)).ok()
+}
+
+/// Справочники для каталога групп. Меняются редко — храним, сеть только если кэша нет или он старше недели.
+async fn cached_get(dir: &Path, file: &str, path: &str, query: &[(&str, String)]) -> Result<String, String> {
+    let f = dir.join(file);
+    let fresh = fs::metadata(&f)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.elapsed().ok())
+        .is_some_and(|age| age < TEACHERS_TTL);
+    if fresh {
+        if let Ok(s) = fs::read_to_string(&f) {
+            return Ok(s);
+        }
+    }
+    match get(path, query).await {
+        Ok(raw) => {
+            let _ = fs::write(&f, &raw);
+            Ok(raw)
+        }
+        Err(e) => fs::read_to_string(&f).map_err(|_| e),
+    }
+}
+
+pub async fn faculties(dir: &Path) -> Result<String, String> {
+    cached_get(dir, "public_faculties.json", "app1/getFaculties", &[]).await
+}
+
+/// Группы факультета на курсе (дневная форма).
+pub async fn groups(dir: &Path, faculty: &str, course: u8) -> Result<String, String> {
+    if !RE_ID.is_match(faculty) || !(1..=6).contains(&course) {
+        return Err("Плохой факультет или курс".into());
+    }
+    cached_get(
+        dir,
+        &format!("public_groups_{faculty}_{course}.json"),
+        "app1/getGroups",
+        &[("facultyId", faculty.to_string()), ("departmentId", "2".into()), ("course", course.to_string())],
+    )
+    .await
+}
+
 /// Личное — удаляем при выходе из аккаунта. Справочник преподавателей общий, его оставляем.
 pub fn forget_personal(dir: &Path) {
     let _ = fs::remove_file(dir.join("public_student.json"));
     if let Ok(entries) = fs::read_dir(dir) {
         for e in entries.flatten() {
-            if e.file_name().to_string_lossy().starts_with("week_") {
+            let name = e.file_name().to_string_lossy().to_string();
+            if name.starts_with("week_") || name.starts_with("sched_") {
                 let _ = fs::remove_file(e.path());
             }
         }
@@ -141,6 +260,10 @@ mod tests {
         assert_eq!(api_date("2026-10-26&x=1"), None);
         assert_eq!(api_date("../../etc"), None);
         assert_eq!(cached_week(Path::new("/nonexistent"), "../secret"), None);
+        assert!(RE_LOGIN.is_match("Tomashevich_VV_25"));
+        assert!(!RE_LOGIN.is_match("a&b=c"));
+        assert!(!RE_ID.is_match("1;2"));
+        assert_eq!(cached_schedule(Path::new("/nonexistent"), Kind::Group, "../x", "2026-10-26"), None);
     }
 }
 
@@ -160,5 +283,13 @@ mod live {
         let tv: serde_json::Value = serde_json::from_str(&t).unwrap();
         println!("teachers={}", tv["items"].as_array().map_or(0, |a| a.len()));
         assert!(super::cached_week(&dir, "2026-10-12").is_some());
+        let st = super::lookup_student(&login).await.unwrap();
+        assert!(st.contains("k_sgryp"));
+        assert!(super::lookup_student("nonexistent_xx_99").await.is_err());
+        let t = super::fetch_schedule(&dir, super::Kind::Teacher, "130544", "2026-10-26", "2026-11-01").await.unwrap();
+        assert!(t.contains("groups"));
+        let g = super::groups(&dir, "30", 2).await.unwrap();
+        assert!(g.contains("ИСИТ"));
+        assert!(super::faculties(&dir).await.unwrap().contains("Факультет"));
     }
 }

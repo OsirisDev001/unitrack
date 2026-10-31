@@ -1,6 +1,6 @@
 [package]
 name = "unitrack"
-version = "0.2.5"
+version = "0.2.6"
 description = "Дедлайны, расписание и пропуски ГрГУ"
 edition = "2021"
 

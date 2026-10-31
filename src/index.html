@@ -2,7 +2,7 @@
 <html lang="ru">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
   <meta name="color-scheme" content="dark" />
   <title>UniTrack</title>
   <link rel="stylesheet" href="styles.css" />
@@ -56,6 +56,7 @@
           </div>
           <button class="icon-btn mobile-only" data-go="settings" aria-label="Настройки"><span class="ico ico-gear"></span><i class="dot hidden" id="update-dot-m"></i></button>
         </header>
+        <button class="chg-banner hidden" id="chg-banner-today" type="button"></button>
         <div class="grid-today">
           <article class="card card-next rise" id="next-card"></article>
           <article class="card card-meter rise" id="meter-card"></article>
@@ -74,15 +75,58 @@
       <section class="view" data-view="schedule">
         <header class="view-head">
           <h1>Расписание</h1>
-          <button class="link hidden" id="week-today">К этой неделе</button>
+          <div class="head-actions">
+            <button class="link hidden" id="week-today">К этой неделе</button>
+            <button class="icon-btn" data-go="search" aria-label="Поиск"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg></button>
+          </div>
         </header>
+        <div class="fav-row" id="fav-row"></div>
+        <div id="who-card" class="hidden"></div>
         <div class="week-nav">
           <button class="icon-btn" id="week-prev" aria-label="Прошлая неделя"><span class="ico ico-back"></span></button>
           <div class="week-title"><b id="week-label"></b><small id="week-sub"></small></div>
           <button class="icon-btn" id="week-next" aria-label="Следующая неделя"><span class="ico ico-back ico-flip"></span></button>
         </div>
+        <button class="chg-banner hidden" id="chg-banner" type="button"></button>
         <div class="day-strip" id="day-strip" role="tablist"></div>
         <div id="day-lessons" class="rise"></div>
+      </section>
+
+      <!-- Поиск: студент / группа / преподаватель -->
+      <section class="view" data-view="search">
+        <header class="view-head">
+          <div class="with-back">
+            <button class="icon-btn" data-go="schedule" aria-label="Назад"><span class="ico ico-back"></span></button>
+            <h1>Поиск</h1>
+          </div>
+        </header>
+        <div class="seg seg-wide" id="search-tabs">
+          <button class="seg-btn" data-tab="student">Студент</button>
+          <button class="seg-btn" data-tab="group">Группа</button>
+          <button class="seg-btn" data-tab="teacher">Преподаватель</button>
+        </div>
+        <form class="search-box" id="search-form" autocomplete="off">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+          <input id="search-input" enterkeyhint="search" autocapitalize="off" spellcheck="false" />
+        </form>
+        <div id="search-body"></div>
+      </section>
+
+      <!-- Общие окна с другом -->
+      <section class="view" data-view="windows">
+        <header class="view-head">
+          <div class="with-back">
+            <button class="icon-btn" data-go="schedule" aria-label="Назад"><span class="ico ico-back"></span></button>
+            <h1>Общие окна</h1>
+          </div>
+        </header>
+        <div class="pair-pick" id="win-pick"></div>
+        <div class="week-nav">
+          <button class="icon-btn" id="win-prev" aria-label="Прошлая неделя"><span class="ico ico-back"></span></button>
+          <div class="week-title"><b id="win-label"></b><small>общие окна за неделю</small></div>
+          <button class="icon-btn" id="win-next" aria-label="Следующая неделя"><span class="ico ico-back ico-flip"></span></button>
+        </div>
+        <div id="win-body"></div>
       </section>
 
       <!-- Задачи -->
@@ -92,10 +136,10 @@
           <button class="btn btn-primary" id="task-add-btn">+ Задача</button>
         </header>
         <form class="quick-add" id="quick-add">
-          <input id="quick-title" placeholder="Быстро: «Лаба 3 по сетям»" aria-label="Название задачи" />
-          <input id="quick-due" type="datetime-local" aria-label="Срок" />
+          <input id="quick-title" placeholder="Быстро: «Отчёт по лабе 3»" aria-label="Название задачи" />
           <button class="btn" type="submit">Добавить</button>
         </form>
+        <div class="quick-chips" id="quick-chips"></div>
         <div id="task-list"></div>
       </section>
 
@@ -173,27 +217,17 @@
       <label>Что сделать
         <input id="t-title" required maxlength="200" />
       </label>
-      <label>Предмет
-        <input id="t-subject" list="subjects" maxlength="120" placeholder="Начни вводить…" />
-        <datalist id="subjects"></datalist>
-      </label>
-      <div class="row2">
-        <label>Тип
-          <select id="t-kind">
-            <option value="lab">Лаба</option>
-            <option value="hw">Домашка</option>
-            <option value="course">Курсовой</option>
-            <option value="test">Контрольная / зачёт</option>
-            <option value="exam">Экзамен</option>
-            <option value="other">Другое</option>
-          </select>
-        </label>
-        <label>Срок
-          <input id="t-due" type="datetime-local" />
-        </label>
-      </div>
+      <div class="lbl">Предмет <small>из твоего расписания</small></div>
+      <div class="chips" id="t-subjects"></div>
+      <input id="t-subject" class="hidden" maxlength="120" placeholder="Свой предмет" aria-label="Предмет" />
+      <div id="t-types-wrap"><div class="lbl">Пара</div><div class="chips" id="t-types"></div></div>
+      <div class="lbl">Сдать к</div>
+      <div class="opts" id="t-when"></div>
+      <input id="t-due" type="datetime-local" class="hidden" aria-label="Своя дата" />
+      <div class="lbl">Тип задания</div>
+      <div class="chips" id="t-kinds"></div>
       <label>Заметка
-        <textarea id="t-notes" rows="3" maxlength="2000"></textarea>
+        <textarea id="t-notes" rows="2" maxlength="2000"></textarea>
       </label>
       <div class="dialog-actions">
         <button type="button" class="btn btn-danger btn-ghost" id="t-delete">Удалить</button>

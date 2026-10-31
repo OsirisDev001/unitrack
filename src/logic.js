@@ -101,7 +101,7 @@ export function normalizeTeachers(raw) {
   const map = new Map();
   for (const t of Array.isArray(raw?.items) ? raw.items : []) {
     const name = [t.surname, t.name, t.patronym].map((x) => String(x || "").trim()).filter(Boolean).join(" ");
-    if (t.id && name) map.set(String(t.id), { name, post: String(t.post || "").trim() });
+    if (t.id && name) map.set(String(t.id), { id: String(t.id), name, post: String(t.post || "").trim(), email: String(t.email || "").trim() });
   }
   return map;
 }
@@ -125,6 +125,9 @@ export function normalizeSchedule(raw, teachers = new Map()) {
           room: l.room || "",
           address: l.address || "",
           subgroup: l.subgroup?.id && l.subgroup.id !== "0" ? l.subgroup.title : "",
+          teacherId: String(l.teacher?.id ?? ""),
+          // У расписания преподавателя вместо препода — группы.
+          groups: (Array.isArray(l.groups) ? l.groups : []).map((g) => String(g.title || "")).filter(Boolean),
           label: l.label || "",
         }))
         .sort((a, b) => a.startMin - b.startMin),
@@ -158,9 +161,9 @@ export function buildWeek(monday, ...sources) {
 export const weekLessons = (week) => week.reduce((n, d) => n + d.lessons.length, 0);
 
 /** Прогноз: та же неделя, что и образец, сдвинутая на 7 дней, с пометкой «предварительно». */
-export function forecastWeek(sample) {
+export function forecastWeek(sample, weeks = 1) {
   return sample.map((d) => ({
-    date: addDays(d.date, 7),
+    date: addDays(d.date, 7 * weeks),
     forecast: true,
     lessons: d.lessons.map((l) => ({ ...l, forecast: true })),
   }));

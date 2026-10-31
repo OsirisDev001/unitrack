@@ -1,7 +1,7 @@
 {
   "name": "unitrack",
   "private": true,
-  "version": "0.2.5",
+  "version": "0.2.6",
   "description": "Дедлайны, расписание и пропуски ГрГУ",
   "scripts": {
     "tauri": "tauri",
@@ -9,7 +9,7 @@
     "build": "tauri build",
     "android:init": "tauri android init",
     "android:build": "tauri android build --apk --target aarch64",
-    "test": "node --test tests/logic.test.mjs tests/study.test.mjs"
+    "test": "node --test tests/logic.test.mjs tests/study.test.mjs tests/schedule.test.mjs"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2"
