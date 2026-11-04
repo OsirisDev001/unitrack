@@ -1,44 +1,47 @@
 // Демо-режим: когда страница открыта в обычном браузере, а не внутри приложения.
 // Даёт посмотреть интерфейс без входа на edu.grsu.by.
 
+// Все люди, группы и предметы здесь выдуманы.
+const MY_GROUP = "СДП-ПИ-242";
+
 const L = (timeStart, timeEnd, title, type, fullname, room, address = "Гаспадарчая, 23", sub = "") => ({
   timeStart, timeEnd, title, type, room, address, label: "",
   teacher: { id: DEMO_IDS[fullname] || "0", fullname, post: "" },
-  subgroup: sub ? { id: "1", title: `СДП-ИСИТ-251.${sub}` } : { id: "0", title: "" },
+  subgroup: sub ? { id: "1", title: `${MY_GROUP}.${sub}` } : { id: "0", title: "" },
 });
 
 const DEMO_TEACHERS = [
-  ["Ляликова", "Валентина", "Ивановна", "доц."], ["Саврас", "Светлана", "Александровна", "ст. преп."],
-  ["Локтевич", "Виктор", "Михайлович", "ст. преп."], ["Войтишкин", "Владимир", "Леонидович", "ст. преп."],
-  ["Игнатенко", "Игорь", "Иванович", "доц."], ["Белов", "Игорь", "Петрович", "ст. преп."],
-  ["Морозенко", "Анна", "Александровна", "доц."], ["Козловская", "Наталья", "Юрьевна", "доц."],
-  ["Бурба", "Александр", "Владимирович", "ст. преп."], ["Анисько", "Пётр", "Евгеньевич", "доц."],
-].map(([surname, name, patronym, post], i) => ({ id: String(100 + i), surname, name, patronym, post }));
+  ["Соколова", "Елена", "Андреевна", "доц.", "e.sokolova@example.com"], ["Морозов", "Дмитрий", "Викторович", "ст. преп.", ""],
+  ["Кузнецов", "Алексей", "Сергеевич", "ст. преп.", "a.kuznetsov@example.com"], ["Попов", "Николай", "Игоревич", "ст. преп.", ""],
+  ["Волкова", "Ольга", "Петровна", "доц.", "o.volkova@example.com"], ["Лебедев", "Кирилл", "Андреевич", "ст. преп.", "k.lebedev@example.com"],
+  ["Новикова", "Татьяна", "Сергеевна", "доц.", ""], ["Фёдорова", "Ирина", "Николаевна", "доц.", "i.fedorova@example.com"],
+  ["Зайцев", "Павел", "Романович", "ст. преп.", "p.zaitsev@example.com"], ["Орлов", "Виктор", "Геннадьевич", "доц.", ""],
+].map(([surname, name, patronym, post, email], i) => ({ id: String(100 + i), surname, name, patronym, post, email }));
 const DEMO_IDS = Object.fromEntries(DEMO_TEACHERS.map((t) => [`${t.surname} ${t.name[0]}.${t.patronym[0]}.`, t.id]));
 
 const WEEK = [
   [
-    L("13:30", "14:55", "Теория вероятностей и математ. статистика", "лек.", "Ляликова В.И.", "101"),
-    L("15:05", "16:30", "Экономика организаций сектора ИКТ", "лек.", "Саврас С.А.", "306"),
-    L("18:15", "19:40", "Основы конструирования программ", "лаб.", "Локтевич В.М.", "303", "К.Маркса,31", "3.2"),
+    L("13:30", "14:55", "Высшая математика", "лек.", "Соколова Е.А.", "101"),
+    L("15:05", "16:30", "Микроэкономика", "лек.", "Морозов Д.В.", "306"),
+    L("18:15", "19:40", "Информатика", "лаб.", "Кузнецов А.С.", "303", "К.Маркса, 31", "2.1"),
   ],
   [
-    L("11:40", "13:05", "Физическая культура", "практ. зан.", "Войтишкин В.Л.", "Спорткомплекс", "Захарова, 32"),
-    L("13:30", "14:55", "Объектно-ориентир. проектиров. и программир.", "лек.", "Игнатенко И.И.", "309"),
-    L("15:05", "16:30", "Компьютерные сети", "лаб.", "Белов И.П.", "204", undefined, "3.2"),
-    L("16:40", "18:05", "Компьютерные сети", "лек.", "Белов И.П.", "306"),
+    L("11:40", "13:05", "Физическая культура", "практ. зан.", "Попов Н.И.", "Спорткомплекс", "Захарова, 32"),
+    L("13:30", "14:55", "Маркетинг", "лек.", "Волкова О.П.", "309"),
+    L("15:05", "16:30", "Базы данных", "лаб.", "Лебедев К.А.", "204", undefined, "2.1"),
+    L("16:40", "18:05", "Базы данных", "лек.", "Лебедев К.А.", "306"),
   ],
   [
-    L("13:30", "14:55", "Социальная психология", "сем. зан.", "Морозенко А.А.", "101"),
-    L("15:05", "16:30", "Системный анализ и проектир. информац. систем", "лек.", "Козловская Н.Ю.", "306"),
+    L("13:30", "14:55", "Философия", "сем. зан.", "Новикова Т.С.", "101"),
+    L("15:05", "16:30", "Менеджмент", "лек.", "Фёдорова И.Н.", "306"),
   ],
   [
-    L("09:00", "10:25", "Скриптовые языки программирования", "лаб.", "Бурба А.В.", "201", undefined, "3.2"),
-    L("15:05", "16:30", "Безопасность жизнедеятельности человека", "лек.", "Анисько П.Е.", "101"),
+    L("09:00", "10:25", "Веб-технологии", "лаб.", "Зайцев П.Р.", "201", undefined, "2.1"),
+    L("15:05", "16:30", "Охрана труда", "лек.", "Орлов В.Г.", "101"),
   ],
   [
-    L("13:30", "14:55", "Теория вероятностей и математ. статистика", "практ. зан.", "Ляликова В.И.", "213"),
-    L("15:05", "16:30", "Системный анализ и проектир. информац. систем", "лаб.", "Козловская Н.Ю.", "211", undefined, "3.2"),
+    L("13:30", "14:55", "Высшая математика", "практ. зан.", "Соколова Е.А.", "213"),
+    L("15:05", "16:30", "Менеджмент", "практ. зан.", "Фёдорова И.Н.", "211", undefined, "2.1"),
   ],
   [],
 ];
@@ -61,8 +64,8 @@ function demoOther(kind, monday) {
   const w = demoWeek(monday);
   if (kind === "teacher") {
     w.days = w.days.map((d, i) => ({ ...d, lessons: [
-      { ...L("09:00", "10:25", "Скриптовые языки программирования", "лаб.", "Бурба А.В.", "201", undefined, "3.2"), groups: [{ title: "СДП-ИСИТ-251" }] },
-      { ...L("11:40", "13:05", "Объектно-ориентир. проектиров. и программир.", "лаб.", "Бурба А.В.", "309"), groups: [{ title: "СДП-ИСИТ-252" }] },
+      { ...L("09:00", "10:25", "Веб-технологии", "лаб.", "Зайцев П.Р.", "201", undefined, "2.1"), groups: [{ title: MY_GROUP }] },
+      { ...L("11:40", "13:05", "Программирование", "лаб.", "Зайцев П.Р.", "309"), groups: [{ title: "СДП-ПИ-251" }] },
     ].slice(0, i % 2 ? 1 : 2) }));
   } else {
     w.days = w.days.map((d, i) => ({ ...d, lessons: WEEK[(i + 1) % 5].map((l) => ({ ...l })) }));
@@ -76,9 +79,9 @@ function demoChanged(w, monday) {
   if (monday !== cur || w.days.length < 3) return w;
   const days = w.days.map((d) => ({ ...d, lessons: d.lessons.map((l) => ({ ...l })) }));
   const tue = days[1].lessons;
-  const oop = tue.find((l) => l.title.startsWith("Объектно"));
-  if (oop) oop.room = "204";
-  const lab = tue.findIndex((l) => l.title === "Компьютерные сети" && l.type === "лаб.");
+  const mk = tue.find((l) => l.title === "Маркетинг");
+  if (mk) mk.room = "204";
+  const lab = tue.findIndex((l) => l.title === "Базы данных" && l.type === "лаб.");
   if (lab >= 0) days[2].lessons.push({ ...tue.splice(lab, 1)[0], timeStart: "16:40", timeEnd: "18:05" });
   return { ...w, days };
 }
@@ -101,45 +104,81 @@ const DEMO_SKIPS = [
 function demoTasks() {
   const h = (hours) => new Date(Date.now() + hours * 36e5).toISOString();
   return [
-    { id: "d1", title: "Лаба 4 — маршрутизация", subject: "Компьютерные сети", kind: "lab", due: h(20), notes: "", done: false, created: 1 },
-    { id: "d2", title: "Отчёт по курсовому, глава 1", subject: "Системный анализ и проектир. информац. систем", kind: "course", due: h(24 * 5), notes: "", done: false, created: 2 },
-    { id: "d3", title: "ДЗ: распределение Пуассона", subject: "Теория вероятностей и математ. статистика", kind: "hw", due: h(-5), notes: "", done: false, created: 3 },
-    { id: "d4", title: "Сдать лабу 2 по ОКП", subject: "Основы конструирования программ", kind: "lab", due: h(-48), notes: "", done: true, created: 4 },
+    { id: "d1", title: "Лаба 4 — индексы", subject: "Базы данных", kind: "lab", due: h(20), notes: "", done: false, created: 1 },
+    { id: "d2", title: "Реферат, глава 1", subject: "Менеджмент", kind: "course", due: h(24 * 5), notes: "", done: false, created: 2 },
+    { id: "d3", title: "ДЗ: пределы функций", subject: "Высшая математика", kind: "hw", due: h(-5), notes: "", done: false, created: 3 },
+    { id: "d4", title: "Сдать лабу 2 по информатике", subject: "Информатика", kind: "lab", due: h(-48), notes: "", done: true, created: 4 },
   ];
+}
+
+/** Предметы текущего семестра с id журнала (учебный год начинается в сентябре). */
+function demoAcad() {
+  const now = new Date();
+  const m = now.getMonth() + 1;
+  return { year: m >= 9 ? now.getFullYear() : now.getFullYear() - 1, sem: m >= 9 || m === 1 ? 5 : 6 };
+}
+const SUBJECTS = ["Высшая математика", "Микроэкономика", "Информатика", "Маркетинг", "Базы данных", "Философия", "Менеджмент", "Веб-технологии", "Охрана труда", "Физическая культура"];
+const KDISC = Object.fromEntries(SUBJECTS.map((s, i) => [s, String(901 + i)]));
+const TOPICS = ["Введение и основные понятия", "Модели и методы", "Практическое применение", "Анализ и оценка", "Проектирование", "Обзор и повторение"];
+const KIND = { "лек.": "Лекция", "практ. зан.": "Практическое занятие", "лаб.": "Лабораторное занятие", "сем. зан.": "Семинарское занятие" };
+
+/** Журнал предмета: все его пары с 1 сентября до конца следующей недели, с выдуманными темами и оценками. */
+function demoPerformance(kdisc) {
+  const subject = Object.keys(KDISC).find((s) => KDISC[s] === kdisc);
+  const { year } = demoAcad();
+  const rows = [];
+  const start = new Date(year, 8, 1);
+  const first = new Date(start.getFullYear(), start.getMonth(), start.getDate() - ((start.getDay() + 6) % 7));
+  const now = new Date();
+  const until = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 14);
+  let k = 0;
+  for (let d = new Date(first); d < until; d.setDate(d.getDate() + 1)) {
+    const wd = (d.getDay() + 6) % 7;
+    if (d < start || wd > 4) continue;
+    for (const l of WEEK[wd]) {
+      if (l.title !== subject) continue;
+      k++;
+      const past = d < now;
+      rows.push({
+        DATE_ACADEMIC: `${iso(d)} ${l.timeStart}:00`, NPOCEN: KIND[l.type] || "Лекция", SSEQUENCE: `${Math.ceil(k / 2)}.${((k - 1) % 2) + 1}.`,
+        NUPCONTENT: `<p>${TOPICS[Math.floor((k - 1) / 2) % TOPICS.length]}</p>`, NDISC: subject, FIO_PREP: l.teacher.fullname,
+        IMARK: past && l.type !== "лек." && k % 3 === 0 ? String(6 + (k % 4)) : "", SABSENT: past && k % 7 === 3 ? "н" : " ",
+      });
+    }
+  }
+  return rows;
 }
 
 const DEMO_STUDY = {
   getCoursesData: {
-    "1": { "1": [{ course_id: "35848", course_name_ru: "Математический анализ" }, { course_id: "37187", course_name_ru: "Основы алгоритмизации и программирования" }], "2": [{ course_id: "38146", course_name_ru: "Основы компьютерной графики" }] },
-    "2": { "3": [{ course_id: "52880", course_name_ru: "Скриптовые языки программирования" }, { course_id: "52873", course_name_ru: "Основы машинного обучения" }, { course_id: "54559", course_name_ru: "Экономика организаций сектора ИКТ" }, { course_id: "53407", course_name_ru: "Курсовой проект «Системный анализ и проектирование ИС»" }], "4": [] },
+    "1": { "1": [{ course_id: "31001", course_name_ru: "Математический анализ" }, { course_id: "31002", course_name_ru: "Основы программирования" }], "2": [{ course_id: "31003", course_name_ru: "Дискретная математика" }] },
+    "2": { "3": [{ course_id: "32001", course_name_ru: "Алгоритмы и структуры данных" }], "4": [{ course_id: "32002", course_name_ru: "Операционные системы" }] },
+    "3": { [demoAcad().sem]: SUBJECTS.map((name, i) => ({ course_id: String(33001 + i), course_name_ru: name, kdisc: KDISC[name], semestr: String(demoAcad().sem), year: String(demoAcad().year) })) },
   },
-  getChoosenCourses: { student: { FIO_R: "Иванов Иван Иванович", N_ZACH: "2025-0001 ", KURS: "2", N_GRYP: "СДП-ИСИТ-251", NAME_SPEC: "Информационные системы и технологии (6-05-0611-01)", N_VOB: "дневная", N_OTDEL: " экономики и управления" } },
+  getChoosenCourses: { student: { FIO_R: "Иванов Иван Иванович", N_ZACH: "2024-0001 ", KURS: "3", N_GRYP: MY_GROUP, NAME_SPEC: "Программная инженерия", N_VOB: "дневная", N_OTDEL: " математики и информатики" } },
   getProgress: [
-    { DOCEN: "07.07.2026", NPOCEN: "Учебная практика", NDISC: "Ознакомительная практика", OCENS: "9(девять)", FIO_TN: "ПЕТРОВ Ю.Г." },
-    { DOCEN: "19.06.2026", NPOCEN: "Экзамен", NDISC: "Иностранный язык (английский)", OCENS: "10(десять)", FIO_TN: "СИДОРОВА А.С." },
-    { DOCEN: "15.06.2026", NPOCEN: "Экзамен", NDISC: "Основы алгоритмизации и программирования", OCENS: "6(шесть)", FIO_TN: "КУЗНЕЦОВА Е.Н." },
-    { DOCEN: "10.06.2026", NPOCEN: "Экзамен", NDISC: "Математический анализ", OCENS: "7(семь)", FIO_TN: "ОРЛОВ В.И." },
-    { DOCEN: "25.05.2026", NPOCEN: "Зачет", NDISC: "Объектно-ориентированное проектирование и программирование", OCENS: "зачтено", FIO_TN: "СМИРНОВ И.И." },
-    { DOCEN: "22.01.2026", NPOCEN: "Экзамен", NDISC: "Дискретная математика", OCENS: "8(восемь)", FIO_TN: "ОРЛОВ В.И." },
-    { DOCEN: "16.01.2026", NPOCEN: "Экзамен", NDISC: "История белорусской государственности", OCENS: "9(девять)", FIO_TN: "ВОЛКОВ А.А." },
+    { DOCEN: "20.06.2026", NPOCEN: "Экзамен", NDISC: "Операционные системы", OCENS: "8(восемь)", FIO_TN: "ПЕТРОВ Ю.Г." },
+    { DOCEN: "15.06.2026", NPOCEN: "Экзамен", NDISC: "Английский язык", OCENS: "9(девять)", FIO_TN: "СИДОРОВА А.С." },
+    { DOCEN: "10.06.2026", NPOCEN: "Зачет", NDISC: "Физическая культура", OCENS: "зачтено", FIO_TN: "ПОПОВ Н.И." },
+    { DOCEN: "20.01.2026", NPOCEN: "Экзамен", NDISC: "Алгоритмы и структуры данных", OCENS: "7(семь)", FIO_TN: "КУЗНЕЦОВ А.С." },
+    { DOCEN: "15.01.2026", NPOCEN: "Экзамен", NDISC: "Математический анализ", OCENS: "6(шесть)", FIO_TN: "СОКОЛОВА Е.А." },
   ],
   getAttestation: [
-    { SEMESTR: "2", NAME_DISC: "Математический анализ", OCEN: "3", childs: [{ NN: "1", DOCEN: "01.06.2026", OCEN: "3" }] },
-    { SEMESTR: "2", NAME_DISC: "Основы алгоритмизации и программирования", OCEN: "4", childs: [{ NN: "1", DOCEN: "12.06.2026", OCEN: "4" }] },
-    { SEMESTR: "2", NAME_DISC: "Введение в разработку ПО", OCEN: "зачтено", childs: [{ NN: "1", DOCEN: "27.05.2026", OCEN: "зачтено" }] },
+    { SEMESTR: "4", NAME_DISC: "Операционные системы", OCEN: "4", childs: [{ NN: "1", DOCEN: "01.06.2026", OCEN: "4" }] },
+    { SEMESTR: "4", NAME_DISC: "Английский язык", OCEN: "зачтено", childs: [{ NN: "1", DOCEN: "27.05.2026", OCEN: "зачтено" }] },
   ],
   getStatistics: [{ year: "2025/2026", sections: [], general: { total_score: "112", letter: "B", preliminary: "1", place_fac: "0", place_univ: "0" } }],
   getLibrary: { status: 200, data: [
-    { N_PR: "Теория вероятностей и математическая статистика", AVTOR: "Ляликова В. И., Зенькова А. В.", N_SAVE: "Филиал № 6 (ф-т экономики и управления)", ADR_SAVE: "ул. Гаспадарчая, 23 — 217, 218", N_DATA: "07.09.26", K_DATA: "12.01.27" },
-    { N_PR: "Беларуская мова. Прафесійная лексіка", AVTOR: "Асіпчук А. М. и др.", N_SAVE: "Филиал № 6 (ф-т экономики и управления)", ADR_SAVE: "ул. Гаспадарчая, 23", N_DATA: "07.09.26", K_DATA: "05.11.26" },
+    { N_PR: "Высшая математика: учебное пособие", AVTOR: "Соколова Е. А.", N_SAVE: "Филиал № 2", ADR_SAVE: "ул. Ожешко, 22", N_DATA: "07.09.26", K_DATA: "12.01.27" },
+    { N_PR: "Базы данных: практикум", AVTOR: "Лебедев К. А.", N_SAVE: "Филиал № 2", ADR_SAVE: "ул. Ожешко, 22", N_DATA: "07.09.26", K_DATA: "05.11.26" },
   ] },
-  getHostel: { status: 200, data: { N_OTDEL: "Общежитие №3", ADRESS: "230015 Гродно БЛК 3", NKW: "98", itogo: "0.00", peny: "0.00", date2: "22.09.2025" } },
+  getHostel: { status: 200, data: { N_OTDEL: "Общежитие №1", ADRESS: "Гродно", NKW: "12", itogo: "0.00", peny: "0.00", date2: "22.09.2025" } },
   getStudentOrders: [
-    { N_PRIKAZ: "расп. 2", NTYPE: "Перевести на 2 семестр", D_PRIKAZ: "26.01.2026", SODER: "Перевести студента 1 курса факультета экономики и управления на 2 семестр." },
-    { N_PRIKAZ: "1024-с", NTYPE: "Зачислить", D_PRIKAZ: "01.08.2025", SODER: "Зачислить на 1 курс дневной формы получения образования." },
+    { N_PRIKAZ: "расп. 2", NTYPE: "Перевести на 5 семестр", D_PRIKAZ: "26.08.2026", SODER: "Перевести студента 2 курса на 3 курс." },
+    { N_PRIKAZ: "1024-с", NTYPE: "Зачислить", D_PRIKAZ: "01.08.2024", SODER: "Зачислить на 1 курс дневной формы получения образования." },
   ],
-  getGroups: [{ GROUPINFO: { N_GRYP: "СДП-ИСИТ-251", T_GRYP: "учебная группа" }, LIST: ["Алексеев А.", "Белова Б.", "Иванов Иван Иванович", "Григорьев Г.", "Дмитриева Д.", "Егоров Е."].map((FIO, i) => ({ FIO, N_ZACH: String(i) })) }],
-  getGradeBookMarkup: { error: 0, data: { title: "<h2 style='text-align:center'>Зачётная книжка</h2><p style='text-align:center'>Иванов Иван Иванович · 2025-0001</p><table border=1 cellpadding=6 style='border-collapse:collapse;width:100%'><tr><td>Дискретная математика</td><td>8 (восемь)</td><td>22.01.2026</td></tr><tr><td>Иностранный язык</td><td>10 (десять)</td><td>19.06.2026</td></tr></table>" } },
+  getGroups: [{ GROUPINFO: { N_GRYP: MY_GROUP, T_GRYP: "учебная группа" }, LIST: ["Алексеев А.", "Белова Б.", "Иванов Иван Иванович", "Григорьев Г.", "Дмитриева Д.", "Егоров Е."].map((FIO, i) => ({ FIO, N_ZACH: String(i) })) }],
+  getGradeBookMarkup: { error: 0, data: { title: "<h2 style='text-align:center'>Зачётная книжка</h2><p style='text-align:center'>Иванов Иван Иванович · 2024-0001</p><table border=1 cellpadding=6 style='border-collapse:collapse;width:100%'><tr><td>Математический анализ</td><td>6 (шесть)</td><td>15.01.2026</td></tr><tr><td>Английский язык</td><td>9 (девять)</td><td>15.06.2026</td></tr></table>" } },
 };
 
 export function demoBackend() {
@@ -167,14 +206,16 @@ export function demoBackend() {
     lookupStudent: async (login) => {
       await wait(400);
       if (!/^[A-Za-z0-9_.-]{2,64}$/.test(login)) throw new Error("Логин выглядит как Ivanov_II_25 — латиница, цифры и _");
-      return JSON.stringify({ id: 1, fullname: "Петров Пётр Петрович", studenttype: "Студент", grouptitle: "СДП-ИСИТ-252", nzach: "", k_sgryp: 2 });
+      return JSON.stringify({ id: 1, fullname: "Петров Пётр Петрович", studenttype: "Студент", grouptitle: "СДП-ПИ-241", nzach: "", k_sgryp: 2 });
     },
     fetchSchedule: async (kind, id, monday) => { await wait(400); return JSON.stringify(demoOther(kind, monday)); },
     cachedSchedule: async () => null,
     fetchFaculties: async () => JSON.stringify({ items: [
       { id: "3", title: "Факультет математики и информатики" }, { id: "30", title: "Факультет экономики и управления" }, { id: "4673", title: "Физико-технический факультет" }] }),
-    fetchGroups: async (fac, course) => JSON.stringify({ items: fac !== "30" ? [{ id: `${fac}${course}`, title: `СДП-ПМИ-${27 - course}1` }] :
-      ["ИСИТ", "ЭУ", "ФиК", "М"].flatMap((sp, i) => [1, 2].map((n) => ({ id: `${course}${i}${n}`, title: `СДП-${sp}-${27 - course}${n}` }))).filter((g) => course <= 4) }),
+    fetchGroups: async (fac, course) => JSON.stringify({ items: course > 4 ? [] : (fac === "3" ? ["ПИ", "ПМИ", "КБ"] : ["ЭУ", "М", "ФиК"])
+      .flatMap((sp, i) => [1, 2].map((n) => ({ id: `${fac}${course}${i}${n}`, title: `СДП-${sp}-${27 - course}${n}` }))) }),
+    fetchPerformance: async (kdisc) => { await wait(300); return JSON.stringify(demoPerformance(kdisc)); },
+    cachedPerformance: async () => null,
     load: async (k) => get(k),
     save: async (k, v) => set(k, v),
     syncInfo: async () => ({ role: "server", ip: "192.168.0.5", port: 47321, pin: "482913" }),

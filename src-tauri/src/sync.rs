@@ -391,7 +391,7 @@ mod tests {
         assert_eq!(read_tasks(&phone).len(), 2);
 
         // Избранное едет вместе с задачами.
-        write_coll(&phone, "favorites", &[json!({"id": "group:18137", "title": "ИСИТ-251", "updated": now})]).unwrap();
+        write_coll(&phone, "favorites", &[json!({"id": "group:10001", "title": "ЭУ-241", "updated": now})]).unwrap();
         rt.block_on(sync_with_port(&phone, "127.0.0.1", &code, 47399)).unwrap();
         assert_eq!(read_coll(&laptop, "favorites").len(), 1);
 

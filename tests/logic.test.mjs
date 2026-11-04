@@ -49,7 +49,7 @@ test("ближайшая пара", () => {
     days: [
       { date: "2026-10-26", lessons: [
         { timeStart: "13:30", timeEnd: "14:55", title: "ТВиМС", teacher: {}, subgroup: { id: "0" } },
-        { timeStart: "15:05", timeEnd: "16:30", title: "Сети", teacher: {}, subgroup: { id: "18764", title: "СДП-ИСИТ-251.3.2" } },
+        { timeStart: "15:05", timeEnd: "16:30", title: "Сети", teacher: {}, subgroup: { id: "18764", title: "СДП-ПИ-251.3.2" } },
       ] },
     ],
   });
@@ -58,7 +58,7 @@ test("ближайшая пара", () => {
   assert.equal(n.isNow, true);
   const n2 = nextLesson(days, new Date(2026, 9, 26, 15, 0));
   assert.equal(n2.lesson.title, "Сети");
-  assert.equal(n2.lesson.subgroup, "СДП-ИСИТ-251.3.2");
+  assert.equal(n2.lesson.subgroup, "СДП-ПИ-251.3.2");
   assert.equal(nextLesson(days, new Date(2026, 9, 26, 17, 0)), null);
 });
 
@@ -93,15 +93,15 @@ test("недели: понедельник, 7 дней, прогноз и пол
   assert.equal(m.isoDate(mon), "2026-10-26");
   assert.equal(m.isoDate(m.mondayOf(new Date(2026, 10, 1))), "2026-10-26"); // воскресенье → тот же понедельник
 
-  const teachers = m.normalizeTeachers({ items: [{ id: "130544", surname: "Бурба", name: "Александр", patronym: "Владимирович", post: "ст. преп." }] });
+  const teachers = m.normalizeTeachers({ items: [{ id: "130544", surname: "Зайцев", name: "Павел", patronym: "Романович", post: "ст. преп." }] });
   const raw = { days: [{ date: "2026-10-27", lessons: [
-    { timeStart: "09:00", timeEnd: "10:25", title: "Скрипты", teacher: { id: 130544, fullname: "Бурба А.В.", post: "" } },
-    { timeStart: "11:40", timeEnd: "13:05", title: "Физра", teacher: { id: 1, fullname: "Войтишкин В.Л.", post: "доц." } },
+    { timeStart: "09:00", timeEnd: "10:25", title: "Скрипты", teacher: { id: 130544, fullname: "Зайцев П.Р.", post: "" } },
+    { timeStart: "11:40", timeEnd: "13:05", title: "Физра", teacher: { id: 1, fullname: "Попов Н.И.", post: "доц." } },
   ] }] };
   const days = m.normalizeSchedule(raw, teachers);
-  assert.equal(days[0].lessons[0].teacher, "Бурба Александр Владимирович");
+  assert.equal(days[0].lessons[0].teacher, "Зайцев Павел Романович");
   assert.equal(days[0].lessons[0].teacherPost, "ст. преп.");
-  assert.equal(days[0].lessons[1].teacher, "Войтишкин В.Л."); // нет в справочнике — как прислал сайт
+  assert.equal(days[0].lessons[1].teacher, "Попов Н.И."); // нет в справочнике — как прислал сайт
 
   const week = m.buildWeek(mon, days);
   assert.equal(week.length, 7);

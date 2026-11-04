@@ -302,9 +302,14 @@ async fn moodle_login(client: &reqwest::Client, c: &Credentials) -> Result<(), S
 }
 
 async fn api_call(client: &reqwest::Client, method: &str) -> Result<Option<String>, String> {
+    api_call_form(client, &[("method".into(), method.into()), ("args".into(), "production".into())]).await
+}
+
+/// Запрос к API кабинета с произвольными полями формы (для методов с аргументами).
+async fn api_call_form(client: &reqwest::Client, fields: &[(String, String)]) -> Result<Option<String>, String> {
     let text = client
         .post(API_URL)
-        .form(&[("method", method), ("args", "production")])
+        .form(fields)
         .send()
         .await
         .map_err(net_err)?
@@ -426,6 +431,57 @@ async fn fetch_api(state: State<'_, AppState>, method: String) -> Result<String,
 
     let _ = fs::write(state.data_dir.join(format!("cache_{method}.json")), &data);
     Ok(data)
+}
+
+fn perf_file(dir: &std::path::Path, kdisc: &str, semester: u8, year: u16) -> PathBuf {
+    dir.join(format!("perf_{kdisc}_{semester}_{year}.json"))
+}
+
+/// Журнал предмета из «Учёта успеваемости и посещаемости»: пары с датами, номерами тем, темами, оценками.
+/// Только чтение. Номер студента — тот же, что в публичном API (ищется по логину).
+#[tauri::command]
+async fn fetch_performance(
+    state: State<'_, AppState>,
+    kdisc: String,
+    semester: u8,
+    year: u16,
+    lang: Option<String>,
+) -> Result<String, String> {
+    let digits = |s: &str| !s.is_empty() && s.len() <= 12 && s.chars().all(|c| c.is_ascii_digit());
+    if !digits(&kdisc) || !(1..=12).contains(&semester) || !(2000..=2100).contains(&year) {
+        return Err("Плохие параметры предмета".into());
+    }
+    let lang = lang.filter(|l| digits(l)).unwrap_or_else(|| "6".into());
+    let creds = secrets::load(&state.data_dir).ok_or("Нужно войти")?;
+    let tabnum = public::student_id(&state.data_dir, &creds.username).await?;
+    let fields: Vec<(String, String)> = vec![
+        ("method".into(), "getPerformanceData".into()),
+        ("args[tabnum]".into(), tabnum),
+        ("args[kdisc]".into(), kdisc.clone()),
+        ("args[semester]".into(), semester.to_string()),
+        ("args[year]".into(), year.to_string()),
+        ("args[lang]".into(), lang),
+        ("args[mode]".into(), "production".into()),
+    ];
+    let (client, seen) = state.snapshot();
+    let data = match api_call_form(&client, &fields).await? {
+        Some(d) => d,
+        None => {
+            state.relogin(&creds, seen).await?;
+            let (client, _) = state.snapshot();
+            api_call_form(&client, &fields)
+                .await?
+                .ok_or("Сайт вернул не то, что ожидалось. Попробуй позже.")?
+        }
+    };
+    let _ = fs::write(perf_file(&state.data_dir, &kdisc, semester, year), &data);
+    Ok(data)
+}
+
+#[tauri::command]
+fn cached_performance(state: State<'_, AppState>, kdisc: String, semester: u8, year: u16) -> Option<String> {
+    kdisc.chars().all(|c| c.is_ascii_digit()).then_some(())?;
+    fs::read_to_string(perf_file(&state.data_dir, &kdisc, semester, year)).ok()
 }
 
 /// Последний успешный ответ сайта — чтобы приложение открывалось мгновенно и без сети.
@@ -702,7 +758,9 @@ pub fn run() {
             fetch_schedule,
             cached_schedule,
             fetch_faculties,
-            fetch_groups
+            fetch_groups,
+            fetch_performance,
+            cached_performance
         ])
         .run(tauri::generate_context!())
         .expect("ошибка запуска UniTrack");

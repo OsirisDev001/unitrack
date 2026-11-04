@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { normalizeSchedule } from "../src/logic.js";
 import {
-  parseGroupTitle, shortGroup, groupCatalog, diffWeeks, changeText, freeWindows, whereNow,
+  parseGroupTitle, shortGroup, groupCatalog, diffWeeks, changeText, dayTogether, whereNow,
   subjectsWithTypes, occurrences, relinkTasks, slotLabel,
 } from "../src/schedule.js";
 
@@ -14,15 +14,15 @@ const week = (byDate) => normalizeSchedule({ days: Object.entries(byDate).map(([
 
 test("группы: разбор названия и каталог", () => {
   assert.deepEqual(
-    { ...parseGroupTitle("СДП-ИСИТ-251") },
-    { title: "СДП-ИСИТ-251", prefix: "СДП", spec: "ИСИТ", code: "251", year: 2025 },
+    { ...parseGroupTitle("СДП-ПИ-251") },
+    { title: "СДП-ПИ-251", prefix: "СДП", spec: "ПИ", code: "251", year: 2025 },
   );
-  assert.equal(shortGroup("СДП-ИСИТ-251"), "ИСИТ-251");
+  assert.equal(shortGroup("СДП-ПИ-251"), "ПИ-251");
   const cat = groupCatalog({
-    1: [{ id: 1, title: "СДП-ИСИТ-261" }, { id: 2, title: "СДП-ЭУ-261" }],
-    2: [{ id: 3, title: "СДП-ИСИТ-252" }, { id: 4, title: "СДП-ИСИТ-251" }],
+    1: [{ id: 1, title: "СДП-ПИ-261" }, { id: 2, title: "СДП-ЭУ-261" }],
+    2: [{ id: 3, title: "СДП-ПИ-252" }, { id: 4, title: "СДП-ПИ-251" }],
   });
-  const isit = cat.find((s) => s.spec === "ИСИТ");
+  const isit = cat.find((s) => s.spec === "ПИ");
   assert.deepEqual(isit.courses.map((c) => c.course), [1, 2]);
   assert.deepEqual(isit.courses[1].groups.map((g) => g.label), ["251", "252"]);
   assert.equal(isit.courses[1].year, 2025);
@@ -49,14 +49,23 @@ test("изменения: аудитория, перенос, отмена, но
   assert.deepEqual(diffWeeks(old, neu, new Date(2026, 10, 9)), []);
 });
 
-test("общие окна", () => {
+test("когда освобождаетесь вместе", () => {
   const me = week({ "2026-11-02": [L("09:00", "10:25", "A", "лек."), L("13:30", "14:55", "B", "лек.")] })[0];
-  const fr = week({ "2026-11-02": [L("09:00", "10:25", "C", "лек."), L("11:40", "13:05", "D", "лек.", "1", "Захарова, 32")] })[0];
-  const r = freeWindows(me, fr);
-  assert.equal(r.allFree, false);
-  assert.deepEqual(r.windows.map((w) => [w.from, w.to]), [["10:25", "11:40"]]);
-  assert.equal(r.windows[0].place, "Гаспадарчая, 23"); // оба после пары на Гаспадарчей
-  assert.equal(freeWindows({ lessons: [] }, { lessons: [] }).allFree, true);
+  const fr = week({ "2026-11-02": [L("11:40", "13:05", "C", "лек."), L("15:05", "16:30", "D", "лек.")] })[0];
+  const r = dayTogether(me, fr);
+  assert.equal(r.myEnd, "14:55");
+  assert.equal(r.theirEnd, "16:30");
+  assert.equal(r.together, "16:30");
+  assert.equal(r.later, "them");
+  assert.equal(r.wait, 95);
+  // Утро до прихода друга (10:25–11:40) — не окно; посреди дня оба на парах — окон нет.
+  assert.deepEqual(r.windows, []);
+  const fr2 = week({ "2026-11-02": [L("09:00", "10:25", "C", "лек."), L("16:40", "18:05", "D", "лек.")] })[0];
+  const r2 = dayTogether(me, fr2);
+  assert.deepEqual(r2.windows.map((w) => [w.from, w.to]), [["10:25", "13:30"]]);
+  assert.equal(r2.windows[0].place, "Гаспадарчая, 23");
+  assert.equal(dayTogether({ lessons: [] }, { lessons: [] }).none, true);
+  assert.equal(dayTogether(me, { lessons: [] }).only, "me");
 });
 
 test("где сейчас преподаватель", () => {

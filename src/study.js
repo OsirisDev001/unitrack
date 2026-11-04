@@ -214,7 +214,13 @@ export function normalizeCourses(raw) {
         .map(([sem, list]) => ({
           semester: Number(sem) || 0,
           items: (Array.isArray(list) ? list : [])
-            .map((c) => ({ id: str(c.course_id), name: str(c.course_name_ru || c.course_name_by || c.course_name_en) }))
+            .map((c) => ({
+              id: str(c.course_id),
+              name: str(c.course_name_ru || c.course_name_by || c.course_name_en),
+              kdisc: str(c.kdisc),
+              semestr: Number(c.semestr) || Number(sem) || 0,
+              year: Number(c.year) || 0,
+            }))
             .filter((c) => c.id && c.name)
             .sort((a, b) => a.name.localeCompare(b.name, "ru")),
         }))
@@ -232,4 +238,67 @@ export function currentSemesterNumber(kurs, now = new Date()) {
   const m = now.getMonth() + 1;
   const autumn = m >= 9 || m === 1;
   return autumn ? kurs * 2 - 1 : kurs * 2;
+}
+
+// ---------- журнал предмета (учёт успеваемости и посещаемости) ----------
+
+/** Предметы текущего семестра с id для журнала. Учебный год начинается в сентябре; осенью семестр нечётный. */
+export function currentCourses(raw, now = new Date()) {
+  const m = now.getMonth() + 1;
+  const autumn = m >= 9 || m === 1;
+  const acadYear = m >= 9 ? now.getFullYear() : now.getFullYear() - 1;
+  return normalizeCourses(raw)
+    .flatMap((k) => k.semesters.flatMap((g) => g.items))
+    .filter((c) => c.kdisc && c.year === acadYear && c.semestr % 2 === (autumn ? 1 : 0));
+}
+
+const ENT = { nbsp: " ", amp: "&", quot: '"', "#39": "'", apos: "'", lt: "<", gt: ">", laquo: "«", raquo: "»", ndash: "–", mdash: "—" };
+/** Текст темы без HTML. */
+export function plainText(html) {
+  return String(html ?? "")
+    .replace(/<[^>]*>/g, " ")
+    .replace(/&(#\d+|#x[0-9a-f]+|[a-z0-9]+);/gi, (all, e) =>
+      e[0] === "#" ? String.fromCodePoint(e[1] === "x" || e[1] === "X" ? parseInt(e.slice(2), 16) : Number(e.slice(1))) : ENT[e.toLowerCase()] ?? all)
+    .replace(/\u00ad/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** «Практическое занятие» → «Практика». */
+export function kindLabel(kind) {
+  const k = String(kind || "").toLowerCase();
+  if (k.startsWith("лек")) return "Лекция";
+  if (k.startsWith("практ")) return "Практика";
+  if (k.startsWith("лаб")) return "Лаба";
+  if (k.startsWith("сем")) return "Семинар";
+  return String(kind || "Пара").trim();
+}
+
+/**
+ * Пары предмета по порядку, с номером по виду пары с начала семестра.
+ * → [{ date: "2026-09-02", start: "16:40", kind, label, n, seq, topic, mark, absent, subject, teacher }]
+ */
+export function normalizePerformance(raw) {
+  const rows = Array.isArray(raw) ? raw : [];
+  const items = rows
+    .map((r) => {
+      const [date = "", time = ""] = str(r.DATE_ACADEMIC).split(" ");
+      return {
+        date,
+        start: time.slice(0, 5),
+        kind: str(r.NPOCEN),
+        label: kindLabel(r.NPOCEN),
+        seq: str(r.SSEQUENCE).replace(/\.$/, ""),
+        topic: plainText(r.NUPCONTENT),
+        mark: str(r.IMARK) || str(r.SMARK),
+        absent: str(r.SABSENT),
+        subject: plainText(r.NDISC),
+        teacher: str(r.FIO_PREP),
+      };
+    })
+    .filter((x) => /^\d{4}-\d{2}-\d{2}$/.test(x.date))
+    .sort((a, b) => (a.date + a.start.padStart(5, "0")).localeCompare(b.date + b.start.padStart(5, "0")));
+  const count = {};
+  for (const x of items) x.n = count[x.label] = (count[x.label] || 0) + 1;
+  return items;
 }

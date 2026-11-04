@@ -6,13 +6,13 @@ import {
 } from "./logic.js";
 import { demoBackend } from "./demo.js";
 import {
-  groupCatalog, shortGroup, diffWeeks, slotKey, changeText, freeWindows, durationText, whereNow,
-  relinkTasks, subjectsWithTypes, occurrences, lessonDue, slotLabel,
+  groupCatalog, shortGroup, diffWeeks, slotKey, changeText, durationText, whereNow,
+  relinkTasks, subjectsWithTypes, occurrences, lessonDue, slotLabel, dayTogether,
 } from "./schedule.js";
 import {
   normalizeProgress, progressBySemester, normalizeAttestation, normalizeRating, normalizeLibrary, normalizeHostel,
   normalizeOrders, normalizeGroups, normalizeProfile, gradebookHtml, shortFio, initials,
-  normalizeCourses, courseUrl, currentSemesterNumber,
+  normalizeCourses, courseUrl, currentSemesterNumber, currentCourses, normalizePerformance,
 } from "./study.js";
 
 /** Ссылки на сайт открываем во внешнем браузере (там пользователь уже залогинен). */
@@ -49,6 +49,8 @@ const api = tauri
       cachedSchedule: (kind, id, monday) => tauri.invoke("cached_schedule", { kind, id, monday }),
       fetchFaculties: () => tauri.invoke("fetch_faculties"),
       fetchGroups: (faculty, course) => tauri.invoke("fetch_groups", { faculty, course }),
+      fetchPerformance: (kdisc, semester, year, lang) => tauri.invoke("fetch_performance", { kdisc, semester, year, lang }),
+      cachedPerformance: (kdisc, semester, year) => tauri.invoke("cached_performance", { kdisc, semester, year }),
     }
   : demoBackend();
 
@@ -70,6 +72,9 @@ const state = {
   changes: {},         // понедельник → { list, seen } — что поменялось в моём расписании
   search: { tab: "group", faculties: null, catalogs: {}, openFaculty: null, openSpec: null, query: "", student: null, studentErr: "", busy: false },
   windowsWith: null,
+  perf: new Map(),      // kdisc → { course, items } — журнал предмета
+  perfIndex: new Map(), // "дата|время" → { kdisc, item } — чтобы найти номер и тему пары в расписании
+  journal: null,        // какой журнал открыт
   tasks: [],
   settings: { limit: DEFAULT_LIMIT },
   selectedDay: null,
@@ -156,6 +161,46 @@ async function loadCache() {
   rebuildDays();
   const st = await Promise.all(STUDY_METHODS.map((m) => api.cached(m)));
   STUDY_METHODS.forEach((m, i) => { if (st[i]) try { state.study[m] = JSON.parse(st[i]); } catch {} });
+  loadPerformance(false);
+}
+
+// ---------- журнал предмета: номера и темы пар ----------
+
+function rebuildPerfIndex() {
+  state.perfIndex.clear();
+  for (const [kdisc, p] of state.perf) for (const item of p.items) state.perfIndex.set(`${item.date}|${item.start}`, { kdisc, item });
+}
+
+/** Пара из моего расписания → строка журнала (по дате и времени начала). */
+const perfFor = (day, l) => state.perfIndex.get(`${isoDate(day.date)}|${l.start}`);
+
+/** Журналы предметов текущего семестра: сразу из сохранённого, потом с сайта (по 3 запроса за раз). */
+async function loadPerformance(fetchFresh) {
+  if (!api.cachedPerformance) return;
+  const courses = currentCourses(study("getCoursesData"));
+  const lang = study("getChoosenCourses")?.student?.K_LANGVICHEDU;
+  for (const c of courses) {
+    if (state.perf.has(c.kdisc)) continue;
+    const raw = await api.cachedPerformance(c.kdisc, c.semestr, c.year);
+    if (raw) try { state.perf.set(c.kdisc, { course: c, items: normalizePerformance(JSON.parse(raw)) }); } catch {}
+  }
+  rebuildPerfIndex();
+  renderSchedule();
+  if (!fetchFresh) return;
+  const queue = [...courses];
+  const worker = async () => {
+    for (let c; (c = queue.shift());) {
+      try {
+        const raw = await api.fetchPerformance(c.kdisc, c.semestr, c.year, lang ? String(lang) : null);
+        state.perf.set(c.kdisc, { course: c, items: normalizePerformance(JSON.parse(raw)) });
+      } catch {}
+    }
+  };
+  await Promise.all([worker(), worker(), worker()]);
+  rebuildPerfIndex();
+  renderSchedule();
+  renderToday();
+  if (state.view === "journal") renderJournal();
 }
 
 /** Раздел «Учёба» тянем вторым заходом: он не должен тормозить главный экран. */
@@ -165,6 +210,7 @@ async function refreshStudy() {
   renderStudy();
   renderToday();
   if (state.view === "detail") renderDetail();
+  loadPerformance(true);
 }
 
 async function refresh() {
@@ -349,12 +395,15 @@ function showView(view) {
   const prevView = state.view;
   const apply = () => {
     state.view = view;
-    const navView = view === "detail" ? "study" : ["search", "windows"].includes(view) ? "schedule" : view;
+    const navView = view === "detail" ? "study" : ["search", "windows", "journal"].includes(view) ? "schedule" : view;
     $$(".nav-btn").forEach((b) => b.classList.toggle("active", b.dataset.view === navView));
     $$(".view").forEach((v) => v.classList.toggle("active", v.dataset.view === view));
     if (view === "detail") renderDetail();
-    if (view === "schedule" && state.weekStart && +state.weekStart !== +currentMonday() && !["search", "windows"].includes(prevView)) openWeek(currentMonday());
+    if (view === "schedule" && state.weekStart && +state.weekStart !== +currentMonday() && !["search", "windows", "journal"].includes(prevView)) openWeek(currentMonday());
+    $("#who-fab").classList.toggle("hidden", view !== "schedule");
+    closeWhoSheet();
     if (view === "search") renderSearch();
+    if (view === "journal") renderJournal();
     if (view === "windows") renderWindows();
     movePill();
     window.scrollTo({ top: 0 });
@@ -452,7 +501,14 @@ function typeTag(type) {
 
 const lowerFirst = (t) => t.charAt(0).toLowerCase() + t.slice(1);
 
-function lessonHTML(day, l, now, change = null) {
+function lessonHTML(day, l, now, change = null, mine = true) {
+  const pf = mine && !l.forecast ? perfFor(day, l) : null;
+  const journal = pf
+    ? `<button class="lesson-num" data-journal="${esc(pf.kdisc)}" data-at="${esc(`${pf.item.date}|${pf.item.start}`)}">
+        <b>${esc(pf.item.label)} №${pf.item.n}</b>${pf.item.topic ? ` · <span>${esc(pf.item.topic)}</span>` : ""}
+        ${pf.item.absent ? `<i class="mark absent">${esc(pf.item.absent)}</i>` : ""}${pf.item.mark ? `<i class="mark">${esc(pf.item.mark)}</i>` : ""}
+      </button>`
+    : "";
   const st = change?.kind === "cancelled" ? "cancelled" : lessonStatus(day, l, now);
   const room = l.room ? `ауд. ${change?.kind === "room" ? `<s>${esc(change.before.room)}</s> → <b class="chg">${esc(l.room)}</b>` : esc(l.room)}${l.address ? `, ${esc(l.address)}` : ""}` : "";
   const who = l.groups?.length
@@ -469,6 +525,7 @@ function lessonHTML(day, l, now, change = null) {
         ${who}
         ${l.subgroup ? `<span class="sub">подгр. ${esc(l.subgroup.split(".").slice(-2).join("."))}</span>` : ""}
       </div>
+      ${journal}
       ${change ? `<div class="chg-note ${change.kind === "cancelled" && !change.ghostText ? "gone" : ""}">${esc(change.ghostText || changeText(change))}</div>` : ""}
     </div>
   </div>`;
@@ -478,7 +535,8 @@ function lessonHTML(day, l, now, change = null) {
 function dayLessonsHTML(day, now, changes) {
   const d = isoDate(day.date);
   const byAfter = new Map(changes.filter((c) => c.after && c.after.date === d).map((c) => [slotKey(d, c.after), c]));
-  const rows = day.lessons.map((l) => [l.startMin, lessonHTML(day, l, now, byAfter.get(slotKey(d, l)))]);
+  const mine = !state.viewing;
+  const rows = day.lessons.map((l) => [l.startMin, lessonHTML(day, l, now, byAfter.get(slotKey(d, l)), mine)]);
   for (const c of changes) {
     if (c.kind === "cancelled" && c.before.date === d) rows.push([c.before.startMin, lessonHTML(day, c.before, now, c)]);
     // На старом месте перенесённой пары — бледная строка «перенесли на …».
@@ -678,9 +736,13 @@ function renderSchedule(now = new Date()) {
 function renderWhoBar(now = new Date()) {
   const v = state.viewing;
   const favs = liveFavs();
-  $("#fav-row").html = `<button class="fav ${!v ? "active" : ""}" data-who="me">Моё</button>` +
-    favs.map((f) => `<button class="fav ${v && favId(v) === f.id ? "active" : ""}" data-who="${esc(f.id)}">${esc(f.title)}</button>`).join("") +
-    (v && !isFav(v) ? `<button class="fav active">${esc(v.title)}</button>` : "");
+  // Кнопка внизу под большим пальцем: чьё расписание сейчас открыто.
+  $("#who-fab").html = `<span class="who-dot ${v ? v.kind : "me"}"></span><b>${esc(v ? v.title : "Моё")}</b><i>▾</i>`;
+  const kindName = { student: "студент", group: "группа", teacher: "преподаватель" };
+  $("#who-list").html = `<button class="who-row ${!v ? "on" : ""}" data-who="me"><span class="who-dot me"></span><span><b>Моё расписание</b><small>${esc(myProfile()?.group ? shortGroup(myProfile().group) : "")}</small></span>${!v ? "<i>✓</i>" : ""}</button>` +
+    favs.map((f) => `<button class="who-row ${v && favId(v) === f.id ? "on" : ""}" data-who="${esc(f.id)}"><span class="who-dot ${f.kind}"></span><span><b>${esc(f.title)}</b><small>${esc(kindName[f.kind] || "")}</small></span>${v && favId(v) === f.id ? "<i>✓</i>" : ""}</button>`).join("") +
+    (v && !isFav(v) ? `<button class="who-row on" data-who="current"><span class="who-dot ${v.kind}"></span><span><b>${esc(v.title)}</b><small>открыто сейчас, не в избранном</small></span><i>✓</i></button>` : "") +
+    (!favs.length ? `<p class="muted small" style="margin:8px 0 0">Добавь кого-нибудь в избранное — он появится здесь.</p>` : "");
   const card = $("#who-card");
   card.classList.toggle("hidden", !v);
   if (!v) { card.html = ""; return; }
@@ -688,7 +750,7 @@ function renderWhoBar(now = new Date()) {
   const buttons = [
     `<button class="btn btn-sm ${isFav(v) ? "" : "btn-primary"}" data-fav>${isFav(v) ? "★ В избранном" : "☆ В избранное"}</button>`,
     t?.email ? `<button class="btn btn-sm" data-mail="${esc(t.email)}">✉ Написать</button>` : "",
-    `<button class="btn btn-sm" data-windows>Общие окна</button>`,
+    v.kind === "teacher" ? "" : `<button class="btn btn-sm" data-windows>Когда освобождаетесь</button>`,
   ].join("");
   let where = "";
   if (v.kind === "teacher") {
@@ -726,9 +788,16 @@ function openPerson(who) {
   if (who) loadWeek(addDays(state.weekStart, 7), who);
 }
 
-$("#fav-row").addEventListener("click", (e) => {
+const whoSheet = $("#who-sheet");
+const closeWhoSheet = () => whoSheet.classList.add("hidden");
+$("#who-fab").addEventListener("click", () => { renderWhoBar(); whoSheet.classList.remove("hidden"); });
+whoSheet.addEventListener("click", (e) => {
+  if (e.target.closest("[data-close]")) return closeWhoSheet();
+  if (e.target.closest("[data-sheet-search]")) { closeWhoSheet(); return go("search"); }
   const b = e.target.closest("[data-who]");
   if (!b) return;
+  closeWhoSheet();
+  if (b.dataset.who === "current") return;
   if (b.dataset.who === "me") return openPerson(null);
   const f = liveFavs().find((x) => x.id === b.dataset.who);
   if (f) openPerson(favToWho(f));
@@ -769,6 +838,42 @@ $("#week-prev").addEventListener("click", () => openWeek(addDays(state.weekStart
 $("#week-next").addEventListener("click", () => openWeek(addDays(state.weekStart, 7)));
 $("#week-today").addEventListener("click", () => openWeek(currentMonday()));
 
+// ---------- журнал предмета ----------
+
+function renderJournal() {
+  const j = state.journal && state.perf.get(state.journal.kdisc);
+  const body = $("#journal-body");
+  if (!j) { $("#journal-title").textContent = "Журнал"; body.html = `<div class="empty">Журнал ещё загружается…</div>`; return; }
+  $("#journal-title").textContent = j.course.name;
+  const now = new Date();
+  const today = isoDate(now);
+  const kinds = [...new Set(j.items.map((x) => x.label))];
+  const absents = j.items.filter((x) => x.absent).length;
+  const marks = j.items.map((x) => Number(String(x.mark).replace(",", "."))).filter((x) => x > 0);
+  const avg = marks.length ? (marks.reduce((a, b) => a + b, 0) / marks.length).toFixed(1) : null;
+  body.html = `<div class="stats journal-stats">
+      ${kinds.map((k) => `<div class="stat"><b>${j.items.filter((x) => x.label === k && x.date <= today).length}</b><span>${esc({ Лекция: "лекций", Практика: "практик", Лаба: "лаб", Семинар: "семинаров" }[k] || k.toLowerCase())} прошло</span></div>`).join("")}
+      <div class="stat"><b>${absents}</b><span>пропусков</span></div>
+      ${avg ? `<div class="stat"><b>${avg}</b><span>средняя</span></div>` : ""}
+    </div>
+    <div class="card" style="padding:4px 18px">${j.items.map((x) => `
+      <div class="j-row ${x.date > today ? "future" : ""} ${state.journal.at === `${x.date}|${x.start}` ? "hl" : ""}" data-row="${esc(`${x.date}|${x.start}`)}">
+        <div class="j-date">${esc(fmtDay(parseIsoDate(x.date), { day: "numeric", month: "short" }))}<span>${esc(fmtDay(parseIsoDate(x.date), { weekday: "short" }))} ${esc(x.start)}</span></div>
+        <div><div class="j-title"><b>${esc(x.label)} №${x.n}</b>${x.seq ? `<small>тема ${esc(x.seq)}</small>` : ""}</div>
+          ${x.topic ? `<div class="j-topic">${esc(x.topic)}</div>` : ""}</div>
+        <div class="j-marks">${x.absent ? `<i class="mark absent">${esc(x.absent)}</i>` : ""}${x.mark ? `<i class="mark">${esc(x.mark)}</i>` : ""}</div>
+      </div>`).join("") || `<div class="empty">В журнале пока пусто.</div>`}</div>`;
+  const hl = body.querySelector(".j-row.hl");
+  if (hl) setTimeout(() => hl.scrollIntoView({ block: "center" }), 60);
+}
+
+document.addEventListener("click", (e) => {
+  const b = e.target.closest("[data-journal]");
+  if (!b) return;
+  state.journal = { kdisc: b.dataset.journal, at: b.dataset.at };
+  go("journal");
+});
+
 // ---------- поиск ----------
 
 const SEARCH_ICO = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>`;
@@ -803,7 +908,7 @@ function renderSearch() {
   const S = state.search;
   $$("#search-tabs .seg-btn").forEach((b) => b.classList.toggle("active", b.dataset.tab === S.tab));
   const input = $("#search-input");
-  input.placeholder = { student: "Логин, например Ivanov_II_25", group: "Группа, например ИСИТ-25", teacher: "Фамилия преподавателя" }[S.tab];
+  input.placeholder = { student: "Логин, например Ivanov_II_25", group: "Группа, например ЭУ-24", teacher: "Фамилия преподавателя" }[S.tab];
   const body = $("#search-body");
   const q = S.query.trim().toLowerCase();
 
@@ -821,7 +926,7 @@ function renderSearch() {
 
   if (S.tab === "teacher") {
     if (!state.teachers.size) { body.html = `<div class="empty">Список преподавателей ещё загружается…</div>`; return; }
-    if (q.length < 2) { body.html = `<p class="muted small">Начни вводить фамилию — например «Бурба».</p>`; return; }
+    if (q.length < 2) { body.html = `<p class="muted small">Начни вводить фамилию — например «Иванов».</p>`; return; }
     const words = q.split(/\s+/);
     const found = [...state.teachers.values()].filter((t) => words.every((w) => t.name.toLowerCase().includes(w))).slice(0, 40);
     body.html = found.length
@@ -907,7 +1012,7 @@ $("#search-body").addEventListener("click", (e) => {
 // ---------- общие окна (C) ----------
 
 function renderWindows() {
-  const who = state.windowsWith || favToWho(liveFavs()[0] || {}) ;
+  const who = state.windowsWith || favToWho(liveFavs()[0] || {});
   const body = $("#win-body");
   const favs = liveFavs().filter((f) => f.kind !== "teacher");
   $("#win-pick").html = `<span class="who me">Ты</span><span class="plus">+</span>` +
@@ -915,29 +1020,37 @@ function renderWindows() {
       ? [...(who?.id && !favs.some((f) => f.id === favId(who)) ? [{ id: favId(who), title: who.title }] : []), ...favs]
         .map((f) => `<button class="who friend ${who?.id && f.id === favId(who) ? "on" : ""}" data-win="${esc(f.id)}">${esc(f.title)}</button>`).join("")
       : `<span class="muted small">Добавь кого-нибудь в избранное</span>`);
-  if (!who?.id) { body.html = `<div class="empty">Открой расписание друга или группы и нажми «Общие окна».</div>`; return; }
+  if (!who?.id) { body.html = `<div class="empty">Открой расписание друга или группы и нажми «Когда освобождаетесь».</div>`; return; }
   const monday = state.weekStart || currentMonday();
   $("#win-label").textContent = weekLabel(monday);
   if (!rawWeek(who, monday)) loadWeek(monday, who);
   const mine = weekDays(monday, null), theirs = weekDays(monday, who);
-  const pct = (m) => `${Math.max(0, Math.min(100, ((m - 480) / 720) * 100))}%`;
-  const w = (a, b) => `left:${pct(a)};width:calc(${pct(b)} - ${pct(a)})`;
-  const rows = [], lines = [];
-  for (let i = 0; i < 6; i++) {
-    const r = freeWindows(mine[i], theirs[i]);
-    const dayName = fmtDay(mine[i].date, { weekday: "short" });
-    rows.push(`<div class="tl"><span>${dayName}</span><div class="bar">
-      ${r.windows.map((x) => `<i class="both" style="${w(x.fromMin, x.toMin)}"></i>`).join("")}
-      ${r.mine.map(([a, b]) => `<i class="me" style="${w(a, b)}"></i>`).join("")}
-      ${r.theirs.map(([a, b]) => `<i class="fr" style="${w(a, b)}"></i>`).join("")}</div></div>`);
-    if (r.allFree && i < 5) lines.push(`<div class="win"><b>${esc(fmtDay(mine[i].date, { weekday: "short", day: "numeric" }))} — весь день</b><span class="muted small">пар нет ни у кого</span></div>`);
-    for (const x of r.windows) lines.push(`<div class="win"><b>${esc(fmtDay(mine[i].date, { weekday: "short", day: "numeric" }))} · ${x.from}–${x.to}</b><span class="muted small">оба свободны ${durationText(x.minutes)}${x.place ? ` · рядом: ${esc(x.place)}` : ""}</span></div>`);
+  const name = who.title;
+  const now = new Date();
+  const rows = [];
+  for (let i = 0; i < 7; i++) {
+    const r = dayTogether(mine[i], theirs[i]);
+    if (r.none && i >= 5) continue;
+    const day = fmtDay(mine[i].date, { weekday: "short", day: "numeric", month: "short" });
+    const past = mine[i].date < new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    let main, sub = "";
+    if (r.none) main = `<span class="muted">пар нет ни у кого</span>`;
+    else if (r.only === "me") main = `<b>свободны с ${r.end}</b>`, sub = `у ${esc(name)} пар нет, ты до ${r.end}`;
+    else if (r.only === "them") main = `<b>свободны с ${r.end}</b>`, sub = `у тебя пар нет, ${esc(name)} до ${r.end}`;
+    else if (r.later === "both") main = `<b>освобождаетесь вместе в ${r.together}</b>`;
+    else {
+      main = `<b>вместе с ${r.together}</b>`;
+      sub = `ты до ${r.myEnd} · ${esc(name)} до ${r.theirEnd} · ${r.later === "them" ? "тебе" : esc(name)} ждать ${durationText(r.wait)}`;
+    }
+    const mids = (r.windows || []).map((w) => `окно ${w.from}–${w.to} (${durationText(w.minutes)})${w.place ? `, оба на ${esc(w.place)}` : ""}`);
+    rows.push(`<div class="win ${past ? "past" : ""} ${sameDay(mine[i].date, now) ? "today" : ""}">
+      <div class="win-day">${esc(day)}</div>
+      <div><div class="win-main">${main}</div>${sub ? `<div class="muted small">${sub}</div>` : ""}
+      ${mids.length ? `<div class="win-mid">${mids.join("<br>")}</div>` : ""}</div></div>`);
   }
   const forecast = mine.some((d) => d.forecast) || theirs.some((d) => d.forecast);
-  body.html = `<div class="legend"><span><i class="me"></i>ты занят</span><span><i class="fr"></i>${esc(who.title)} занят</span><span><i class="both"></i>оба свободны</span></div>
-    <article class="card tl-card">${rows.join("")}<div class="tl-axis"><span>8:00</span><span>12:00</span><span>16:00</span><span>20:00</span></div></article>
-    ${forecast ? `<div class="pre-note">Предварительно: часть недели — прогноз по текущей.</div>` : ""}
-    <div class="card" style="padding:4px 18px">${lines.join("") || `<div class="empty">На этой неделе общих окон нет.</div>`}</div>`;
+  body.html = `${forecast ? `<div class="pre-note">Предварительно: часть недели — прогноз по текущей.</div>` : ""}
+    <div class="card" style="padding:4px 18px">${rows.join("")}</div>`;
 }
 
 $("#win-pick").addEventListener("click", (e) => {
@@ -1234,6 +1347,7 @@ $("#logout-btn").addEventListener("click", async () => {
   state.skips = []; state.days = []; state.lastSync = null; state.username = null;
   state.cabinetRaw = null; state.weekRaw.clear(); state.weekFetched.clear(); state.weekStart = null;
   state.otherRaw.clear(); state.viewing = null; state.favorites = []; state.changes = {};
+  state.perf.clear(); state.perfIndex.clear();
   api.save("favorites", "[]"); api.save("sched_changes", "{}");
   api.save("last_sync", "");
   showLogin();

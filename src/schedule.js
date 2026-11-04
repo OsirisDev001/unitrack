@@ -10,7 +10,7 @@ export const slotLabel = (date, start) => `${WD[(typeof date === "string" ? pars
 
 // ---------- группы ----------
 
-/** «СДП-ИСИТ-251» → { spec: "ИСИТ", code: "251", year: 2025, prefix: "СДП" }. */
+/** «СДП-ЭУ-241» → { spec: "ЭУ", code: "241", year: 2024, prefix: "СДП" }. */
 export function parseGroupTitle(title) {
   const parts = String(title || "").trim().split("-");
   const code = parts.length >= 2 ? parts[parts.length - 1] : "";
@@ -24,7 +24,7 @@ export function parseGroupTitle(title) {
   };
 }
 
-/** Короткое имя для чипов: «ИСИТ-251». */
+/** Короткое имя для чипов: «ЭУ-241». */
 export const shortGroup = (title) => {
   const g = parseGroupTitle(title);
   return g.spec && g.code ? `${g.spec}-${g.code}` : g.title;
@@ -120,27 +120,38 @@ export function changeText(c) {
 // ---------- общие окна (C) ----------
 
 /**
- * Окна, когда оба свободны, в пределах «учебного дня» (от первой пары любого из двух до последней).
- * → { allFree, windows: [{ from, to, minutes, place }], mine: [[a,b]], theirs: [[a,b]] }
+ * День двоих: когда каждый заканчивает и с какого времени свободны оба (главное),
+ * плюс окна посреди дня — только пока оба уже на парах (до пар окна не считаем).
+ * → { none } | { only: "me" | "them", end } | { myEnd, theirEnd, together, wait, later: "me" | "them" | "both", windows: [...] }
  */
-export function freeWindows(myDay, theirDay, minMinutes = 30) {
-  const busy = (d) => (d?.lessons || []).map((l) => [l.startMin, l.endMin, l]);
+export function dayTogether(myDay, theirDay, minMinutes = 30) {
+  const busy = (d) => (d?.lessons || []).filter((l) => !l.cancelled).map((l) => [l.startMin, l.endMin, l]);
   const mine = busy(myDay), theirs = busy(theirDay);
+  if (!mine.length && !theirs.length) return { none: true };
+  const last = (list) => Math.max(...list.map((x) => x[1]));
+  const first = (list) => Math.min(...list.map((x) => x[0]));
+  if (!mine.length) return { only: "them", end: hhmm(last(theirs)) };
+  if (!theirs.length) return { only: "me", end: hhmm(last(mine)) };
+  const myEnd = last(mine), theirEnd = last(theirs);
+  const together = Math.max(myEnd, theirEnd);
+  // Окна посреди дня: от момента, когда оба уже пришли, до момента, когда кто-то закончил.
+  const from = Math.max(first(mine), first(theirs)), to = Math.min(myEnd, theirEnd);
   const all = [...mine, ...theirs].sort((a, b) => a[0] - b[0]);
-  if (!all.length) return { allFree: true, windows: [], mine: [], theirs: [] };
   const windows = [];
-  let end = all[0][1];
-  for (const [s, e] of all.slice(1)) {
-    if (s - end >= minMinutes) {
-      // Где окажутся оба перед окном: если у обоих последняя пара в одном корпусе — подскажем.
-      const before = (list) => list.filter(([, e2]) => e2 <= s).sort((a, b) => b[1] - a[1])[0]?.[2];
+  let end = -1;
+  for (const [s, e] of all) {
+    const a = Math.max(end, from), b = Math.min(s, to);
+    if (end >= 0 && b - a >= minMinutes) {
+      const before = (list) => list.filter(([, e2]) => e2 <= b).sort((x, y) => y[1] - x[1])[0]?.[2];
       const pm = before(mine), pt = before(theirs);
-      const place = pm && pt && pm.address && pm.address === pt.address ? pm.address : "";
-      windows.push({ from: hhmm(end), to: hhmm(s), fromMin: end, toMin: s, minutes: s - end, place });
+      windows.push({ from: hhmm(a), to: hhmm(b), minutes: b - a, place: pm && pt && pm.address && pm.address === pt.address ? pm.address : "" });
     }
     end = Math.max(end, e);
   }
-  return { allFree: false, windows, mine: mine.map(([a, b]) => [a, b]), theirs: theirs.map(([a, b]) => [a, b]) };
+  return {
+    myEnd: hhmm(myEnd), theirEnd: hhmm(theirEnd), together: hhmm(together), wait: Math.abs(myEnd - theirEnd),
+    later: myEnd === theirEnd ? "both" : myEnd > theirEnd ? "me" : "them", windows,
+  };
 }
 
 export const durationText = (min) => (min >= 60 ? `${Math.floor(min / 60)} ч${min % 60 ? ` ${min % 60} мин` : ""}` : `${min} мин`);

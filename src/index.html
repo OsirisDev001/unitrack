@@ -80,7 +80,6 @@
             <button class="icon-btn" data-go="search" aria-label="Поиск"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg></button>
           </div>
         </header>
-        <div class="fav-row" id="fav-row"></div>
         <div id="who-card" class="hidden"></div>
         <div class="week-nav">
           <button class="icon-btn" id="week-prev" aria-label="Прошлая неделя"><span class="ico ico-back"></span></button>
@@ -112,18 +111,29 @@
         <div id="search-body"></div>
       </section>
 
+      <!-- Журнал предмета -->
+      <section class="view" data-view="journal">
+        <header class="view-head">
+          <div class="with-back">
+            <button class="icon-btn" data-go="schedule" aria-label="Назад"><span class="ico ico-back"></span></button>
+            <h1 id="journal-title">Журнал</h1>
+          </div>
+        </header>
+        <div id="journal-body"></div>
+      </section>
+
       <!-- Общие окна с другом -->
       <section class="view" data-view="windows">
         <header class="view-head">
           <div class="with-back">
             <button class="icon-btn" data-go="schedule" aria-label="Назад"><span class="ico ico-back"></span></button>
-            <h1>Общие окна</h1>
+            <h1>Когда освобождаетесь</h1>
           </div>
         </header>
         <div class="pair-pick" id="win-pick"></div>
         <div class="week-nav">
           <button class="icon-btn" id="win-prev" aria-label="Прошлая неделя"><span class="ico ico-back"></span></button>
-          <div class="week-title"><b id="win-label"></b><small>общие окна за неделю</small></div>
+          <div class="week-title"><b id="win-label"></b><small>по дням недели</small></div>
           <button class="icon-btn" id="win-next" aria-label="Следующая неделя"><span class="ico ico-back ico-flip"></span></button>
         </div>
         <div id="win-body"></div>
@@ -206,6 +216,17 @@
         </article>
       </section>
     </main>
+  </div>
+
+  <!-- Чьё расписание: кнопка и шторка внизу, под большим пальцем -->
+  <button class="who-fab hidden" id="who-fab" type="button" aria-label="Чьё расписание"></button>
+  <div class="who-sheet hidden" id="who-sheet">
+    <div class="sheet-dim" data-close></div>
+    <div class="sheet" role="dialog" aria-label="Чьё расписание">
+      <div class="grab" data-close></div>
+      <div id="who-list"></div>
+      <button class="btn sheet-search" type="button" data-sheet-search>Найти студента, группу или преподавателя</button>
+    </div>
   </div>
 
   <div class="toast hidden" id="toast" role="status"></div>

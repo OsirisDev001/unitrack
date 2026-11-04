@@ -47,7 +47,7 @@ pub fn api_date(iso: &str) -> Option<String> {
 }
 
 /// id студента по логину — ищем один раз и запоминаем.
-async fn student_id(dir: &Path, login: &str) -> Result<String, String> {
+pub async fn student_id(dir: &Path, login: &str) -> Result<String, String> {
     let file = dir.join("public_student.json");
     if let Some(id) = fs::read_to_string(&file)
         .ok()
@@ -242,7 +242,7 @@ pub fn forget_personal(dir: &Path) {
     if let Ok(entries) = fs::read_dir(dir) {
         for e in entries.flatten() {
             let name = e.file_name().to_string_lossy().to_string();
-            if name.starts_with("week_") || name.starts_with("sched_") {
+            if name.starts_with("week_") || name.starts_with("sched_") || name.starts_with("perf_") {
                 let _ = fs::remove_file(e.path());
             }
         }
@@ -260,7 +260,7 @@ mod tests {
         assert_eq!(api_date("2026-10-26&x=1"), None);
         assert_eq!(api_date("../../etc"), None);
         assert_eq!(cached_week(Path::new("/nonexistent"), "../secret"), None);
-        assert!(RE_LOGIN.is_match("Tomashevich_VV_25"));
+        assert!(RE_LOGIN.is_match("Ivanov_II_25"));
         assert!(!RE_LOGIN.is_match("a&b=c"));
         assert!(!RE_ID.is_match("1;2"));
         assert_eq!(cached_schedule(Path::new("/nonexistent"), Kind::Group, "../x", "2026-10-26"), None);
@@ -286,10 +286,11 @@ mod live {
         let st = super::lookup_student(&login).await.unwrap();
         assert!(st.contains("k_sgryp"));
         assert!(super::lookup_student("nonexistent_xx_99").await.is_err());
-        let t = super::fetch_schedule(&dir, super::Kind::Teacher, "130544", "2026-10-26", "2026-11-01").await.unwrap();
-        assert!(t.contains("groups"));
+        // Любой преподаватель из справочника — его расписание за текущую неделю должно прийти.
+        let first_id = tv["items"][0]["id"].as_str().unwrap().to_string();
+        assert!(super::fetch_schedule(&dir, super::Kind::Teacher, &first_id, "2026-10-26", "2026-11-01").await.is_ok());
         let g = super::groups(&dir, "30", 2).await.unwrap();
-        assert!(g.contains("ИСИТ"));
+        assert!(g.contains("items"));
         assert!(super::faculties(&dir).await.unwrap().contains("Факультет"));
     }
 }
