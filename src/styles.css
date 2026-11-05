@@ -699,3 +699,50 @@ html, body { touch-action: pan-x pan-y; -webkit-text-size-adjust: 100%; text-siz
   background: linear-gradient(135deg, rgba(169,139,255,.22), rgba(169,139,255,.06)); animation: rise .5s var(--spring) both; }
 .upd-banner span { display: grid; gap: 2px; } .upd-banner small { color: var(--muted); font-size: 12px; }
 .upd-banner i { font-style: normal; font-weight: 800; color: var(--accent-ink); background: linear-gradient(160deg, #d6c6ff, #a98bff); padding: 8px 14px; border-radius: 12px; white-space: nowrap; }
+
+/* Номер пары без темы — компактный квадратик справа от названия */
+.lesson-title { position: relative; }
+.num-side { display: inline-flex; gap: 4px; align-items: center; margin-right: 8px; vertical-align: 2px; }
+.num-badge { height: 22px; padding: 0 7px; border-radius: 7px; border: 1px solid rgba(199,179,255,.3); background: rgba(169,139,255,.1);
+  color: var(--accent); font: inherit; font-size: 12px; font-weight: 800; line-height: 20px; cursor: pointer; }
+.num-side .mark { margin-left: 0; }
+
+/* Номер пары внутри метки вида: «практ | 10» */
+.tag-num { font-family: inherit; line-height: inherit; border: 0; cursor: pointer; display: inline-flex; align-items: center; }
+.tag .n { margin-left: 5px; padding-left: 6px; border-left: 1px solid currentColor; font-weight: 800; }
+.tag-num:active { transform: scale(.95); }
+
+/* ---------- «Учёба»: свои карточки вместо цветных плиток ---------- */
+.sx { display: grid; gap: 12px; }
+.sx-card { display: grid; gap: 10px; text-align: left; font: inherit; color: var(--text); cursor: pointer; padding: 16px 18px; border-radius: 22px;
+  border: 1px solid var(--line); background: var(--surface); transition: transform .4s var(--spring), border-color .25s; animation: rise .55s var(--ease) both; }
+.sx-card:hover { border-color: rgba(199,179,255,.35); }
+.sx-card:active { transform: scale(.97); transition-duration: .08s; }
+.sx-k { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+.sx-k .ico { width: 16px; height: 16px; background: var(--accent); }
+.sx-hero { background: radial-gradient(120% 140% at 100% 0%, rgba(169,139,255,.22), transparent 60%), var(--surface); }
+.sx-big { display: grid; gap: 2px; }
+.sx-big b { font-size: 44px; font-weight: 800; letter-spacing: -.04em; line-height: 1; font-variant-numeric: tabular-nums; }
+.sx-big small, .sx-sub, .sx-row small, .sx-mid small { color: var(--muted); font-size: 13px; }
+.sx-bars { display: flex; align-items: flex-end; gap: 8px; height: 74px; margin-top: 4px; }
+.sx-bar { flex: 0 1 46px; height: 100%; display: grid; grid-template-rows: 1fr auto; gap: 4px; }
+.sx-bar i { align-self: end; display: block; border-radius: 6px 6px 3px 3px; background: rgba(199,179,255,.22); }
+.sx-bar.now i { background: linear-gradient(180deg, #d6c6ff, #a98bff); }
+.sx-bar span { font-size: 10px; color: var(--muted); text-align: center; font-variant-numeric: tabular-nums; }
+.sx-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.sx-mid { display: flex; align-items: baseline; gap: 6px; }
+.sx-mid b { font-size: 30px; font-weight: 800; letter-spacing: -.03em; font-variant-numeric: tabular-nums; }
+.sx-letter { font-style: normal; font-weight: 800; font-size: 13px; color: var(--accent-ink); background: linear-gradient(160deg, #d6c6ff, #a98bff); padding: 2px 8px; border-radius: 8px; }
+.sx-sub.hot { color: #ffc478; }
+.sx-row { display: flex; align-items: baseline; gap: 8px; }
+.sx-row b { font-size: 26px; font-weight: 800; }
+.sx-go { margin-left: auto; font-style: normal; color: var(--muted); font-size: 20px; }
+.sx-list { padding: 4px 6px; gap: 0; cursor: default; }
+.sx-list:active { transform: none; }
+.sx-li { display: flex; align-items: center; gap: 12px; width: 100%; text-align: left; font: inherit; color: var(--text); background: none; border: 0; border-top: 1px solid var(--line); padding: 12px 10px; cursor: pointer; border-radius: 12px; }
+.sx-li:first-child { border-top: 0; }
+.sx-li:hover { background: rgba(255,255,255,.03); }
+.sx-li > span:nth-child(2) { display: grid; gap: 2px; min-width: 0; } .sx-li small { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sx-ico { width: 36px; height: 36px; border-radius: 12px; display: grid; place-items: center; background: rgba(169,139,255,.12); flex: none; }
+.sx-ico .ico { width: 18px; height: 18px; background: var(--accent); }
+@media (min-width: 900px) { .sx { grid-template-columns: 1.3fr 1fr; align-items: start; } .sx-hero { grid-row: span 2; } }

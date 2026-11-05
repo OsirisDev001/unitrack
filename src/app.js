@@ -11,7 +11,7 @@ import {
 } from "./schedule.js";
 import {
   normalizeProgress, progressBySemester, normalizeAttestation, normalizeRating, normalizeLibrary, normalizeHostel,
-  normalizeOrders, normalizeGroups, normalizeProfile, gradebookHtml, shortFio, initials,
+  normalizeOrders, normalizeGroups, normalizeProfile, shortFio, initials,
   normalizeCourses, courseUrl, currentSemesterNumber, currentCourses, normalizePerformance,
 } from "./study.js";
 
@@ -88,7 +88,7 @@ const state = {
 };
 
 // Разделы «Учёбы» — методы API кабинета (только чтение).
-const STUDY_METHODS = ["getCoursesData", "getChoosenCourses", "getProgress", "getAttestation", "getStatistics", "getLibrary", "getHostel", "getStudentOrders", "getGroups", "getGradeBookMarkup"];
+const STUDY_METHODS = ["getCoursesData", "getChoosenCourses", "getProgress", "getAttestation", "getStatistics", "getLibrary", "getHostel", "getStudentOrders", "getGroups"];
 
 const $ = (s, root = document) => root.querySelector(s);
 
@@ -519,22 +519,26 @@ $("#refresh-btn").addEventListener("click", refresh);
 
 // ---------- рендер: общее ----------
 
-function typeTag(type) {
+/** «практ. зан.» → «практ», «лек.» → «лек»: везде без точек. */
+const typeShort = (type) => String(type || "").replace(/\s*зан\.?/, "").replace(/\./g, "").trim();
+
+/** Метка вида пары; с номером из журнала — «практ | 10», нажатие открывает журнал предмета. */
+function typeTag(type, pf = null) {
   if (!type) return "";
   const t = type.toLowerCase();
   const cls = t.startsWith("лек") ? "lec" : t.startsWith("лаб") ? "lab" : t.startsWith("практ") ? "prac" : t.startsWith("сем") ? "sem" : "";
-  return `<span class="tag tag-${cls}">${esc(type.replace(/\.$/, "").replace(" зан", ""))}</span>`;
+  if (!pf) return `<span class="tag tag-${cls}">${esc(typeShort(type))}</span>`;
+  return `<button class="tag tag-${cls} tag-num" data-journal="${esc(pf.kdisc)}" data-at="${esc(`${pf.item.date}|${pf.item.start}`)}" title="${esc(pf.item.label)} №${pf.item.n}">${esc(typeShort(type))}<span class="n">${pf.item.n}</span></button>`;
 }
 
 const lowerFirst = (t) => t.charAt(0).toLowerCase() + t.slice(1);
 
 function lessonHTML(day, l, now, change = null, mine = true) {
   const pf = mine ? perfFor(day, l) : null;
-  const journal = pf
-    ? `<button class="lesson-num" data-journal="${esc(pf.kdisc)}" data-at="${esc(`${pf.item.date}|${pf.item.start}`)}">
-        <b>${esc(pf.item.label)} №${pf.item.n}</b>${pf.item.topic ? ` · <span>${esc(pf.item.topic)}</span>` : ""}
-        ${pf.item.absent ? `<i class="mark absent">${esc(pf.item.absent)}</i>` : ""}${pf.item.mark ? `<i class="mark">${esc(pf.item.mark)}</i>` : ""}
-      </button>`
+  // Номер — в метке вида пары («практ | 10»); тема — плашкой снизу, только когда её внесли в журнал.
+  const marks = pf ? `${pf.item.absent ? `<i class="mark absent">${esc(pf.item.absent)}</i>` : ""}${pf.item.mark ? `<i class="mark">${esc(pf.item.mark)}</i>` : ""}` : "";
+  const journal = pf?.item.topic
+    ? `<button class="lesson-num" data-journal="${esc(pf.kdisc)}" data-at="${esc(`${pf.item.date}|${pf.item.start}`)}"><span>${esc(pf.item.topic)}</span>${marks}</button>`
     : "";
   const st = change?.kind === "cancelled" ? "cancelled" : lessonStatus(day, l, now);
   const room = l.room ? `ауд. ${change?.kind === "room" ? `<s>${esc(change.before.room)}</s> → <b class="chg">${esc(l.room)}</b>` : esc(l.room)}${l.address ? `, ${esc(l.address)}` : ""}` : "";
@@ -546,7 +550,7 @@ function lessonHTML(day, l, now, change = null, mine = true) {
   return `<div class="lesson ${st} ${l.forecast ? "forecast" : ""} ${change && change.kind !== "cancelled" ? "changed" : ""}">
     <div class="lesson-time">${esc(l.start)}<span>${esc(l.end)}</span></div>
     <div>
-      <div class="lesson-title">${typeTag(l.type)}${esc(l.title)}</div>
+      <div class="lesson-title">${typeTag(l.type, pf)}${pf && !pf.item.topic && marks ? `<span class="num-side">${marks}</span>` : ""}${esc(l.title)}</div>
       <div class="lesson-meta">
         ${room ? `<span>${room}</span>` : ""}
         ${who}
@@ -1257,7 +1261,7 @@ function renderTaskForm() {
   if (dstate.type && !types.includes(dstate.type)) dstate.type = null;
   if (!dstate.type && types.length === 1) dstate.type = types[0];
   $("#t-types-wrap").classList.toggle("hidden", types.length < 2);
-  $("#t-types").html = types.map((ty) => `<button type="button" class="pchip ${ty === dstate.type ? "on" : ""}" data-type="${esc(ty)}">${esc(ty.replace(/\.$/, "").replace(" зан", ""))}</button>`).join("");
+  $("#t-types").html = types.map((ty) => `<button type="button" class="pchip ${ty === dstate.type ? "on" : ""}" data-type="${esc(ty)}">${esc(typeShort(ty))}</button>`).join("");
 
   // К какой паре сдавать.
   dstate.occ = known && !dstate.custom ? occurrences(plan, dstate.subject, dstate.type, now, 3) : [];
@@ -1463,35 +1467,65 @@ function bookDueHTML(b) {
 const pluralBooks = (n) => { const a = n % 100, b = n % 10; return `${n} ${a > 10 && a < 20 ? "книг" : b === 1 ? "книга" : b >= 2 && b <= 4 ? "книги" : "книг"}`; };
 
 /** Плитки раздела «Учёба»: показываем только то, на что сайт реально отдал данные. */
-function studyTiles(now = new Date()) {
-  const tiles = [];
+/** Раздел «Учёба»: крупно — успеваемость; рядом — рейтинг и библиотека; курсы строкой; редкое — списком. */
+function studyHTML(now = new Date()) {
+  const parts = [];
+  const prog = normalizeProgress(study("getProgress"));
+  const sems = progressBySemester(prog);
+  if (sems.length) {
+    const last = sems[0];
+    const chrono = sems.filter((g) => g.avg).slice(0, 8).reverse();
+    const lo = 4, hi = 10;
+    const bars = chrono.map((g, i) => {
+      const h = Math.max(8, Math.round(((g.avg - lo) / (hi - lo)) * 100));
+      return `<div class="sx-bar ${i === chrono.length - 1 ? "now" : ""}"><i style="height:${h}%"></i><span>${g.avg.toFixed(1)}</span></div>`;
+    }).join("");
+    parts.push(`<button class="sx-card sx-hero" data-go-detail="progress">
+      <span class="sx-k"><span class="ico ico-cap"></span>Успеваемость</span>
+      <span class="sx-big">${last.avg ? `<b data-count="${last.avg}" data-fmt="1" data-ck="avg">0</b><small>средний балл · ${esc(last.label.split(" ")[0].toLowerCase())}</small>` : `<b>${prog.length}</b><small>оценок</small>`}</span>
+      ${chrono.length > 1 ? `<span class="sx-bars">${bars}</span>` : ""}
+    </button>`);
+  }
+  const small = [];
+  const r = normalizeRating(study("getStatistics"));
+  if (r) small.push(`<button class="sx-card" data-go-detail="rating">
+      <span class="sx-k"><span class="ico ico-chart"></span>Рейтинг</span>
+      <span class="sx-mid"><b data-count="${r.score}" data-ck="score">0</b>${r.letter ? `<em class="sx-letter">${esc(r.letter)}</em>` : ""}</span>
+      <small class="sx-sub">баллов за год</small></button>`);
+  const books = libraryBooks(now);
+  if (books.length) {
+    const soon = books.find((b) => b.daysLeft !== null);
+    const hot = soon && soon.daysLeft <= 7;
+    small.push(`<button class="sx-card" data-go-detail="library">
+      <span class="sx-k"><span class="ico ico-shelf"></span>Библиотека</span>
+      <span class="sx-mid"><b>${books.length}</b><small>${pluralBooks(books.length).split(" ")[1]}</small></span>
+      <small class="sx-sub ${hot ? "hot" : ""}">${soon ? `вернуть до ${soon.due.toLocaleDateString("ru-RU", { day: "numeric", month: "short" })}` : "на руках"}</small></button>`);
+  }
+  if (small.length) parts.push(`<div class="sx-pair">${small.join("")}</div>`);
+
   const courses = normalizeCourses(study("getCoursesData"));
   if (courses.length) {
     const prof = normalizeProfile(study("getChoosenCourses"));
     const sem = prof ? currentSemesterNumber(Number(prof.course) || 1, now) : null;
     const cur = courses.flatMap((k) => k.semesters).find((x) => x.semester === sem);
-    tiles.push({ key: "courses", title: "Курсы", color: "lilac", icon: "layers", stat: cur ? `<b>${cur.items.length}</b><small>предметов в ${sem} семестре</small>` : `<small>материалы на платформе</small>` });
+    parts.push(`<button class="sx-card sx-wide" data-go-detail="courses">
+      <span class="sx-k"><span class="ico ico-layers"></span>Курсы на платформе</span>
+      <span class="sx-row"><b>${cur ? cur.items.length : "—"}</b><small>${cur ? `предметов в ${sem} семестре` : "материалы предметов"}</small><i class="sx-go">›</i></span>
+    </button>`);
   }
-  const prog = normalizeProgress(study("getProgress"));
-  if (prog.length) {
-    const last = progressBySemester(prog)[0];
-    tiles.push({ key: "progress", title: "Успеваемость", color: "plum2", icon: "cap", stat: last.avg ? `<b data-count="${last.avg}" data-fmt="1" data-ck="avg">0</b><small>средний за ${last.label.split(" ")[0].toLowerCase()}</small>` : `<small>${prog.length} оценок</small>` });
-  }
-  if (gradebookHtml(study("getGradeBookMarkup"))) tiles.push({ key: "gradebook", title: "Зачётка", color: "rose", icon: "book", stat: "<small>электронная</small>" });
-  const r = normalizeRating(study("getStatistics"));
-  if (r) tiles.push({ key: "rating", title: "Рейтинг", color: "sky", icon: "chart", stat: `<b data-count="${r.score}" data-ck="score">0</b><small>баллов${r.letter ? ` · ${esc(r.letter)}` : ""}</small>` });
-  const books = libraryBooks(now);
-  if (books.length) {
-    const soon = books.find((b) => b.daysLeft !== null);
-    tiles.push({ key: "library", title: "Библиотека", color: "sage", icon: "shelf", stat: `<b>${books.length}</b><small>${pluralBooks(books.length).split(" ")[1]} на руках${soon ? ` · до ${soon.due.toLocaleDateString("ru-RU", { day: "numeric", month: "short" })}` : ""}</small>` });
-  }
-  const h = normalizeHostel(study("getHostel"));
-  if (h) tiles.push({ key: "hostel", title: "Общежитие", color: "sand", icon: "home", stat: `<b>${esc(h.room)}</b><small>комната · ${h.debt > 0 ? `долг ${h.debt.toFixed(2)} р.` : "долгов нет"}</small>` });
+
+  const rows = [];
   const orders = normalizeOrders(study("getStudentOrders"));
-  if (orders.length) tiles.push({ key: "orders", title: "Приказы", color: "peach", icon: "doc", stat: `<b>${orders.length}</b><small>последний ${esc(orders[0].dateText)}</small>` });
+  if (orders.length) rows.push(["orders", "doc", "Приказы", `${orders.length} · последний ${orders[0].dateText}`]);
   const groups = normalizeGroups(study("getGroups"));
-  if (groups.length) tiles.push({ key: "group", title: "Группа", color: "plum", icon: "people", stat: `<b>${groups[0].members.length}</b><small>${esc(groups[0].name)}</small>` });
-  return tiles;
+  if (groups.length) rows.push(["group", "people", "Группа", `${groups[0].name} · ${groups[0].members.length} чел.`]);
+  // Общежитие — только тем, кто там живёт или жил: у городских раздела нет.
+  const h = normalizeHostel(study("getHostel"));
+  if (h?.room) rows.push(["hostel", "home", "Общежитие", `комната ${h.room}${h.name ? ` · ${h.name}` : ""}`]);
+  if (rows.length) parts.push(`<div class="sx-card sx-list">${rows.map(([key, icon, title, sub]) => `
+      <button class="sx-li" data-go-detail="${key}"><span class="sx-ico"><span class="ico ico-${icon}"></span></span>
+        <span><b>${esc(title)}</b><small>${esc(sub)}</small></span><i class="sx-go">›</i></button>`).join("")}</div>`);
+  return parts.join("");
 }
 
 function renderStudy(now = new Date()) {
@@ -1513,14 +1547,7 @@ function renderStudy(now = new Date()) {
        </details>`
     : `<div class="avatar">?</div><div class="profile-main"><div class="profile-name">${esc(state.username || "")}</div><div class="muted small">Данные профиля появятся после обновления</div></div>`;
 
-  const tiles = studyTiles(now);
-  $("#study-tiles").html = tiles.length
-    ? tiles.map((t) => `<button class="tile tile-${t.color}" data-go-detail="${t.key}">
-        <span class="tile-title">${t.title}</span>
-        <span class="tile-ico ico ico-${t.icon}" aria-hidden="true"></span>
-        <span class="tile-stat">${t.stat}</span>
-      </button>`).join("")
-    : `<div class="empty">Разделы появятся после первого обновления данных.</div>`;
+  $("#study-tiles").html = studyHTML(now) || `<div class="empty">Разделы появятся после первого обновления данных.</div>`;
 }
 
 document.addEventListener("click", (e) => {
@@ -1538,7 +1565,7 @@ function semesterLabel(n) {
 function renderDetail(now = new Date()) {
   const key = state.detail;
   const body = $("#detail-body");
-  const titles = { courses: "Курсы", progress: "Успеваемость", gradebook: "Зачётка", rating: "Рейтинг", library: "Библиотека", hostel: "Общежитие", orders: "Приказы", group: "Группа" };
+  const titles = { courses: "Курсы", progress: "Успеваемость", rating: "Рейтинг", library: "Библиотека", hostel: "Общежитие", orders: "Приказы", group: "Группа" };
   $("#detail-title").textContent = titles[key] || "";
 
   if (key === "courses") {
@@ -1577,10 +1604,6 @@ function renderDetail(now = new Date()) {
             <div class="grade ${/^\d/.test(i.result) ? `g${Math.min(10, parseInt(i.result))}` : "pass"}">${/^\d/.test(i.result) ? esc(parseInt(i.result)) : "✓"}</div>
             <div><div class="row-title">${esc(i.subject)}</div><div class="row-sub">${esc(i.result)}${i.attempts.length ? ` · ${i.attempts.map((a) => esc(a.date)).join(", ")}` : ""}${i.attempts.length > 1 ? ` · попыток: ${i.attempts.length}` : ""}</div></div>
           </div>`).join("")}</div>`).join("") || `<div class="empty">Данных аттестации нет.</div>`}</div>`;
-  } else if (key === "gradebook") {
-    body.html = `<p class="muted small">Документ в том виде, в каком его отдаёт сайт.</p><iframe class="doc-frame" sandbox title="Зачётка"></iframe>`;
-    const f = $(".doc-frame", body);
-    f.srcdoc = `<!doctype html><meta charset="utf-8"><style>body{font-family:system-ui,sans-serif;margin:16px;color:#1b1722;background:#fbf9ff}</style>${gradebookHtml(study("getGradeBookMarkup"))}`;
   } else if (key === "rating") {
     const r = normalizeRating(study("getStatistics"));
     body.html = r ? `<div class="card hero-num rise">
