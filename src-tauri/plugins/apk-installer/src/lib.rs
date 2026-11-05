@@ -37,6 +37,24 @@ impl<R: Runtime> ApkInstaller<R> {
     }
 }
 
+impl<R: Runtime> ApkInstaller<R> {
+    /// Сменить иконку приложения на рабочем столе (Android).
+    pub fn set_icon(&self, name: &str) -> Result<(), String> {
+        #[cfg(target_os = "android")]
+        {
+            self.handle
+                .run_mobile_plugin::<serde_json::Value>("setIcon", serde_json::json!({ "name": name }))
+                .map(|_| ())
+                .map_err(|e| e.to_string())
+        }
+        #[cfg(not(target_os = "android"))]
+        {
+            let _ = name;
+            Err("Только на Android".into())
+        }
+    }
+}
+
 pub trait ApkInstallerExt<R: Runtime> {
     fn apk_installer(&self) -> &ApkInstaller<R>;
 }

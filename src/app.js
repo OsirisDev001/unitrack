@@ -51,6 +51,7 @@ const api = tauri
       fetchGroups: (faculty, course) => tauri.invoke("fetch_groups", { faculty, course }),
       fetchPerformance: (kdisc, semester, year, lang) => tauri.invoke("fetch_performance", { kdisc, semester, year, lang }),
       cachedPerformance: (kdisc, semester, year) => tauri.invoke("cached_performance", { kdisc, semester, year }),
+      setAppIcon: (name) => tauri.invoke("set_app_icon", { name }),
     }
   : demoBackend();
 
@@ -1733,6 +1734,114 @@ async function initUpdates() {
   setInterval(() => { if (!document.hidden) checkUpdates(false); }, 6 * 3600_000);
 }
 
+// ---------- темы оформления ----------
+// [id, название, фон, карточка, акцент]; «Как в системе» — тёмная лиловая или светлая вслед за ОС.
+const THEMES = [
+  ["system", "Как в системе"],
+  ["lilac", "Лиловая", "#110f16", "#1b1823", "#c7b3ff"],
+  ["amoled", "Чёрная", "#000000", "#0b0a0e", "#c7b3ff"],
+  ["midnight", "Полночь", "#0e1017", "#171a24", "#a9c1ff"],
+  ["ocean", "Океан", "#0c1215", "#141b1f", "#8ee3f0"],
+  ["mint", "Мята", "#0d1312", "#151d1b", "#9be8cf"],
+  ["sakura", "Сакура", "#140f13", "#1d161c", "#ffb7d5"],
+  ["sunset", "Закат", "#151010", "#1e1716", "#ffb59a"],
+  ["amber", "Янтарь", "#12100c", "#1b1813", "#ffd27a"],
+  ["graphite", "Графит", "#0f0f11", "#18181b", "#e6e6ea"],
+  ["light", "Светлая", "#f6f3fc", "#ffffff", "#7a55e8"],
+  ["light-mint", "Светлая мята", "#f2f8f6", "#ffffff", "#1f9c78"],
+  ["light-sand", "Песочная", "#f8f4ec", "#fffdf8", "#b5701c"],
+];
+const CARD_STYLES = [
+  ["soft", "Обычные"], ["glass", "Стекло"], ["neon", "Неон"], ["aura", "Аура"], ["holo", "Голограмма"], ["soft3d", "Объём"],
+  ["outline", "Контур"], ["tint", "Цветные"], ["brutal", "Брутал"], ["sticker", "Стикеры"], ["paper", "Тетрадь"],
+  ["blueprint", "Чертёж"], ["corners", "Уголки"], ["sharp", "Строгие"],
+];
+const APP_ICONS = [
+  ["lilac", "Сирень"], ["night", "Ночь"], ["minimal", "Минимал"], ["gradient", "Градиент"], ["mint", "Мята"], ["sunset", "Закат"],
+  ["ocean", "Океан"], ["calendar", "Календарь"], ["notebook", "Тетрадь"], ["pixel", "Пиксель"], ["mono", "Монохром"],
+];
+/** Значок в шапке приложения — тот же, что выбран иконкой. */
+const applyBrand = () => document.documentElement.style.setProperty("--brand-icon", `url("icons/${state.settings.icon || "lilac"}.svg")`);
+const systemDark = window.matchMedia?.("(prefers-color-scheme: dark)");
+
+function applyTheme() {
+  let id = state.settings.theme || "lilac";
+  if (id === "system") id = systemDark && !systemDark.matches ? "light" : "lilac";
+  if (id === "lilac") delete document.documentElement.dataset.theme;
+  else document.documentElement.dataset.theme = id;
+  const cards = state.settings.cards || "soft";
+  if (cards === "soft") delete document.documentElement.dataset.cards;
+  else document.documentElement.dataset.cards = cards;
+  try { localStorage.setItem("unitrack_theme_applied", id); localStorage.setItem("unitrack_cards_applied", cards); } catch {}
+  const light = id.startsWith("light");
+  document.querySelector('meta[name="color-scheme"]')?.setAttribute("content", light ? "light" : "dark");
+}
+systemDark?.addEventListener?.("change", () => { if (state.settings.theme === "system") applyTheme(); });
+// Тема из прошлого запуска — сразу, до загрузки настроек, чтобы не мигало.
+try {
+  const t = localStorage.getItem("unitrack_theme_applied"); if (t && t !== "lilac") document.documentElement.dataset.theme = t;
+  const c = localStorage.getItem("unitrack_cards_applied"); if (c && c !== "soft") document.documentElement.dataset.cards = c;
+} catch {}
+
+function renderThemes() {
+  const cur = state.settings.theme || "lilac";
+  $("#theme-name").textContent = THEMES.find((t) => t[0] === cur)?.[1] || "";
+  $("#theme-grid").html = THEMES.map(([id, name, bg, card, acc]) => {
+    const dot = id === "system"
+      ? `<span class="theme-dot" style="background:linear-gradient(135deg,#110f16 50%,#f6f3fc 50%)"><i style="background:#c7b3ff"></i></span>`
+      : `<span class="theme-dot" style="background:${bg}"><b style="background:${card}"></b><i style="background:${acc}"></i></span>`;
+    return `<button class="theme-sw ${id === cur ? "on" : ""}" data-theme-id="${id}" aria-pressed="${id === cur}">${dot}<span>${esc(name)}</span></button>`;
+  }).join("");
+  const curCards = state.settings.cards || "soft";
+  $("#cards-name").textContent = CARD_STYLES.find((c) => c[0] === curCards)?.[1] || "";
+  $("#cards-grid").html = CARD_STYLES.map(([id, name]) => `<button class="pchip ${id === curCards ? "on" : ""}" data-cards-id="${id}">${esc(name)}</button>`).join("");
+}
+function renderIcons() {
+  const cur = state.settings.icon || "lilac";
+  $("#icon-name").textContent = APP_ICONS.find((i) => i[0] === cur)?.[1] || "";
+  $("#icon-grid").html = APP_ICONS.map(([id, name]) => `<button class="icon-sw ${id === cur ? "on" : ""}" data-icon-id="${id}" aria-pressed="${id === cur}">
+    <img src="icons/${id}.svg" alt="" loading="lazy"><span>${esc(name)}</span></button>`).join("");
+  $("#icon-note").textContent = /Android/i.test(navigator.userAgent)
+    ? "Иконка на рабочем столе сменится через пару секунд. На некоторых телефонах ярлык придётся вынести на экран заново."
+    : "На Windows меняется иконка окна и панели задач, пока приложение открыто. Ярлык в «Пуске» остаётся прежним.";
+}
+$("#icon-grid").addEventListener("click", async (e) => {
+  const b = e.target.closest("[data-icon-id]");
+  if (!b || b.dataset.iconId === (state.settings.icon || "lilac")) return;
+  const prev = state.settings.icon || "lilac";
+  state.settings.icon = b.dataset.iconId;
+  applyBrand();
+  renderIcons();
+  try {
+    await api.setAppIcon?.(state.settings.icon);
+    saveSettings();
+    toast("Иконка сменена");
+  } catch (err) {
+    state.settings.icon = prev;
+    applyBrand();
+    renderIcons();
+    toast(String(err));
+  }
+});
+$("#cards-grid").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-cards-id]");
+  if (!b) return;
+  state.settings.cards = b.dataset.cardsId;
+  saveSettings();
+  const swap = () => { applyTheme(); renderThemes(); };
+  if (document.startViewTransition && !reduceMotion) document.startViewTransition(swap);
+  else swap();
+});
+$("#theme-grid").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-theme-id]");
+  if (!b) return;
+  state.settings.theme = b.dataset.themeId;
+  saveSettings();
+  const swap = () => { applyTheme(); renderThemes(); };
+  if (document.startViewTransition && !reduceMotion) document.startViewTransition(swap);
+  else swap();
+});
+
 // ---------- без масштабирования ----------
 // Щипок на тачпаде и Ctrl+колёсико приходят в WebView как wheel с ctrlKey; Ctrl +/−/0 — клавишами.
 window.addEventListener("wheel", (e) => { if (e.ctrlKey) e.preventDefault(); }, { passive: false });
@@ -1757,6 +1866,12 @@ function renderAll() {
 async function boot() {
   history.replaceState({ view: "today" }, "");
   await loadLocal();
+  applyTheme();
+  renderThemes();
+  applyBrand();
+  renderIcons();
+  // На Windows иконка окна не сохраняется между запусками — ставим заново. На Android ярлык помнит её сам.
+  if (state.settings.icon && state.settings.icon !== "lilac" && !/Android/i.test(navigator.userAgent)) api.setAppIcon?.(state.settings.icon).catch(() => {});
   await initSync();
   initUpdates();
   state.username = await api.savedUsername();

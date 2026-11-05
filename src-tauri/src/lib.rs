@@ -372,6 +372,49 @@ fn cached_week(state: State<'_, AppState>, monday: String) -> Option<String> {
     public::cached_week(&state.data_dir, &monday)
 }
 
+/// Иконки приложения на выбор (как в Дискорде).
+const APP_ICONS: &[&str] = &["lilac", "night", "minimal", "gradient", "mint", "sunset", "ocean", "calendar", "notebook", "pixel", "mono"];
+
+/// Сменить иконку: на Android — иконку на рабочем столе, на Windows — иконку окна и панели задач.
+#[tauri::command]
+fn set_app_icon(app: tauri::AppHandle, name: String) -> Result<(), String> {
+    if !APP_ICONS.contains(&name.as_str()) {
+        return Err("Нет такой иконки".into());
+    }
+    #[cfg(target_os = "android")]
+    {
+        use tauri_plugin_apk_installer::ApkInstallerExt;
+        app.apk_installer().set_icon(&name)
+    }
+    #[cfg(desktop)]
+    {
+        let bytes: &[u8] = match name.as_str() {
+            "lilac" => include_bytes!("../icons/alt/lilac.png"),
+            "night" => include_bytes!("../icons/alt/night.png"),
+            "minimal" => include_bytes!("../icons/alt/minimal.png"),
+            "gradient" => include_bytes!("../icons/alt/gradient.png"),
+            "mint" => include_bytes!("../icons/alt/mint.png"),
+            "sunset" => include_bytes!("../icons/alt/sunset.png"),
+            "ocean" => include_bytes!("../icons/alt/ocean.png"),
+            "calendar" => include_bytes!("../icons/alt/calendar.png"),
+            "notebook" => include_bytes!("../icons/alt/notebook.png"),
+            "pixel" => include_bytes!("../icons/alt/pixel.png"),
+            "mono" => include_bytes!("../icons/alt/mono.png"),
+            _ => return Err("Нет такой иконки".into()),
+        };
+        let img = tauri::image::Image::from_bytes(bytes).map_err(|e| e.to_string())?;
+        if let Some(w) = app.get_webview_window("main") {
+            w.set_icon(img).map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    }
+    #[cfg(not(any(desktop, target_os = "android")))]
+    {
+        let _ = app;
+        Err("Не поддерживается".into())
+    }
+}
+
 /// Справочник преподавателей с полными ФИО.
 #[tauri::command]
 async fn fetch_teachers(state: State<'_, AppState>) -> Result<String, String> {
@@ -760,7 +803,8 @@ pub fn run() {
             fetch_faculties,
             fetch_groups,
             fetch_performance,
-            cached_performance
+            cached_performance,
+            set_app_icon
         ])
         .run(tauri::generate_context!())
         .expect("ошибка запуска UniTrack");

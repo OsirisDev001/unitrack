@@ -1,7 +1,9 @@
 package by.tomashevich.apkinstaller
 
 import android.app.Activity
+import android.content.ComponentName
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
@@ -20,6 +22,13 @@ class UpdateFileProvider : FileProvider()
 class InstallArgs {
     lateinit var path: String
 }
+
+@InvokeArg
+class IconArgs {
+    lateinit var name: String
+}
+
+private val ICONS = listOf("lilac", "night", "minimal", "gradient", "mint", "sunset", "ocean", "calendar", "notebook", "pixel", "mono")
 
 @TauriPlugin
 class ApkInstallerPlugin(private val activity: Activity) : Plugin(activity) {
@@ -55,6 +64,28 @@ class ApkInstallerPlugin(private val activity: Activity) : Plugin(activity) {
             invoke.resolve()
         } catch (ex: Exception) {
             invoke.reject(ex.message ?: "Не удалось открыть установку")
+        }
+    }
+
+    /** Иконка на рабочем столе: включаем нужный ярлык, остальные выключаем. */
+    @Command
+    fun setIcon(invoke: Invoke) {
+        try {
+            val name = invoke.parseArgs(IconArgs::class.java).name
+            if (name !in ICONS) {
+                invoke.reject("Нет такой иконки")
+                return
+            }
+            val pm = activity.packageManager
+            val alias = { n: String -> ComponentName(activity.packageName, "by.tomashevich.unitrack.Icon" + n.replaceFirstChar { it.uppercase() }) }
+            // Сначала включаем новую, потом выключаем остальные — чтобы ярлык не пропадал совсем.
+            pm.setComponentEnabledSetting(alias(name), PackageManager.COMPONENT_ENABLED_STATE_ENABLED, PackageManager.DONT_KILL_APP)
+            for (n in ICONS) if (n != name) {
+                pm.setComponentEnabledSetting(alias(n), PackageManager.COMPONENT_ENABLED_STATE_DISABLED, PackageManager.DONT_KILL_APP)
+            }
+            invoke.resolve()
+        } catch (ex: Exception) {
+            invoke.reject(ex.message ?: "Не удалось сменить иконку")
         }
     }
 }
