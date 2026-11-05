@@ -688,3 +688,14 @@ html, body { touch-action: pan-x pan-y; -webkit-text-size-adjust: 100%; text-siz
 .win-mid { margin-top: 6px; font-size: 12px; color: var(--muted); padding-left: 10px; border-left: 2px solid rgba(123,224,168,.35); line-height: 1.5; }
 
 .view[data-view="schedule"] { padding-bottom: 76px; }
+
+/* Длинные сообщения (ошибки, ссылки) не вылезают за карточку. */
+.card .small, #update-msg, #sync-msg { overflow-wrap: anywhere; word-break: break-word; }
+.btn-row { flex-wrap: wrap; }
+
+/* Плашка «доступно обновление» на главном экране */
+.upd-banner { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 12px; text-align: left; font: inherit; color: var(--text);
+  cursor: pointer; padding: 12px 14px; border-radius: 16px; margin-bottom: 12px; border: 1px solid rgba(199,179,255,.45);
+  background: linear-gradient(135deg, rgba(169,139,255,.22), rgba(169,139,255,.06)); animation: rise .5s var(--spring) both; }
+.upd-banner span { display: grid; gap: 2px; } .upd-banner small { color: var(--muted); font-size: 12px; }
+.upd-banner i { font-style: normal; font-weight: 800; color: var(--accent-ink); background: linear-gradient(160deg, #d6c6ff, #a98bff); padding: 8px 14px; border-radius: 12px; white-space: nowrap; }

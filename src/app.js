@@ -7,7 +7,7 @@ import {
 import { demoBackend } from "./demo.js";
 import {
   groupCatalog, shortGroup, diffWeeks, slotKey, changeText, durationText, whereNow,
-  relinkTasks, subjectsWithTypes, occurrences, lessonDue, slotLabel, dayTogether,
+  relinkTasks, subjectsWithTypes, occurrences, lessonDue, slotLabel, dayTogether, predictLessonNumbers,
 } from "./schedule.js";
 import {
   normalizeProgress, progressBySemester, normalizeAttestation, normalizeRating, normalizeLibrary, normalizeHostel,
@@ -74,6 +74,7 @@ const state = {
   windowsWith: null,
   perf: new Map(),      // kdisc → { course, items } — журнал предмета
   perfIndex: new Map(), // "дата|время" → { kdisc, item } — чтобы найти номер и тему пары в расписании
+  perfNext: new Map(),  // "дата|время" → { kdisc, item } — досчитанные номера пар, которых ещё нет в журнале
   journal: null,        // какой журнал открыт
   tasks: [],
   settings: { limit: DEFAULT_LIMIT },
@@ -169,10 +170,33 @@ async function loadCache() {
 function rebuildPerfIndex() {
   state.perfIndex.clear();
   for (const [kdisc, p] of state.perf) for (const item of p.items) state.perfIndex.set(`${item.date}|${item.start}`, { kdisc, item });
+  rebuildPerfNext();
 }
 
-/** Пара из моего расписания → строка журнала (по дате и времени начала). */
-const perfFor = (day, l) => state.perfIndex.get(`${isoDate(day.date)}|${l.start}`);
+/** С какой недели нужно расписание, чтобы досчитать номера: с последней заполненной пары журнала (не дальше 8 недель назад). */
+function perfFromMonday() {
+  const cur = currentMonday();
+  let from = cur;
+  for (const p of state.perf.values()) {
+    const last = p.items.at(-1);
+    if (last) { const m = mondayOf(parseIsoDate(last.date)); if (m < from) from = m; }
+  }
+  return from < addDays(cur, -56) ? addDays(cur, -56) : from;
+}
+
+/** Досчитанные номера пар этой и следующей недели, которых ещё нет в журнале. */
+function rebuildPerfNext() {
+  state.perfNext.clear();
+  if (!state.perf.size) return;
+  const lessons = [];
+  for (let m = perfFromMonday(); m <= addDays(currentMonday(), 7); m = addDays(m, 7)) {
+    for (const d of weekDays(m, null)) for (const l of d.lessons) lessons.push({ l, date: isoDate(d.date) });
+  }
+  state.perfNext = predictLessonNumbers(lessons, new Map([...state.perf].map(([k, p]) => [k, p.items])));
+}
+
+/** Пара из моего расписания → строка журнала (по дате и времени), а если её ещё не внесли — досчитанный номер. */
+const perfFor = (day, l) => state.perfIndex.get(`${isoDate(day.date)}|${l.start}`) || state.perfNext.get(`${isoDate(day.date)}|${l.start}`);
 
 /** Журналы предметов текущего семестра: сразу из сохранённого, потом с сайта (по 3 запроса за раз). */
 async function loadPerformance(fetchFresh) {
@@ -198,6 +222,8 @@ async function loadPerformance(fetchFresh) {
   };
   await Promise.all([worker(), worker(), worker()]);
   rebuildPerfIndex();
+  // Для досчёта номеров нужно расписание с последней заполненной пары — подгружаем эти недели (они кэшируются).
+  for (let m = perfFromMonday(); m < currentMonday(); m = addDays(m, 7)) loadWeek(m, null);
   renderSchedule();
   renderToday();
   if (state.view === "journal") renderJournal();
@@ -333,6 +359,7 @@ function relinkMine() {
 
 function renderWeekChange() {
   rebuildDays();
+  rebuildPerfNext();
   relinkMine();
   renderSchedule();
   renderToday();
@@ -502,7 +529,7 @@ function typeTag(type) {
 const lowerFirst = (t) => t.charAt(0).toLowerCase() + t.slice(1);
 
 function lessonHTML(day, l, now, change = null, mine = true) {
-  const pf = mine && !l.forecast ? perfFor(day, l) : null;
+  const pf = mine ? perfFor(day, l) : null;
   const journal = pf
     ? `<button class="lesson-num" data-journal="${esc(pf.kdisc)}" data-at="${esc(`${pf.item.date}|${pf.item.start}`)}">
         <b>${esc(pf.item.label)} №${pf.item.n}</b>${pf.item.topic ? ` · <span>${esc(pf.item.topic)}</span>` : ""}
@@ -851,16 +878,18 @@ function renderJournal() {
   const absents = j.items.filter((x) => x.absent).length;
   const marks = j.items.map((x) => Number(String(x.mark).replace(",", "."))).filter((x) => x > 0);
   const avg = marks.length ? (marks.reduce((a, b) => a + b, 0) / marks.length).toFixed(1) : null;
+  const upcoming = [...state.perfNext.values()].filter((x) => x.kdisc === state.journal.kdisc).map((x) => x.item);
+  const rowsAll = [...j.items, ...upcoming];
   body.html = `<div class="stats journal-stats">
       ${kinds.map((k) => `<div class="stat"><b>${j.items.filter((x) => x.label === k && x.date <= today).length}</b><span>${esc({ Лекция: "лекций", Практика: "практик", Лаба: "лаб", Семинар: "семинаров" }[k] || k.toLowerCase())} прошло</span></div>`).join("")}
       <div class="stat"><b>${absents}</b><span>пропусков</span></div>
       ${avg ? `<div class="stat"><b>${avg}</b><span>средняя</span></div>` : ""}
     </div>
-    <div class="card" style="padding:4px 18px">${j.items.map((x) => `
+    <div class="card" style="padding:4px 18px">${rowsAll.map((x) => `
       <div class="j-row ${x.date > today ? "future" : ""} ${state.journal.at === `${x.date}|${x.start}` ? "hl" : ""}" data-row="${esc(`${x.date}|${x.start}`)}">
         <div class="j-date">${esc(fmtDay(parseIsoDate(x.date), { day: "numeric", month: "short" }))}<span>${esc(fmtDay(parseIsoDate(x.date), { weekday: "short" }))} ${esc(x.start)}</span></div>
         <div><div class="j-title"><b>${esc(x.label)} №${x.n}</b>${x.seq ? `<small>тема ${esc(x.seq)}</small>` : ""}</div>
-          ${x.topic ? `<div class="j-topic">${esc(x.topic)}</div>` : ""}</div>
+          ${x.topic ? `<div class="j-topic">${esc(x.topic)}</div>` : x.next ? `<div class="j-topic">тема появится, когда пару внесут в журнал</div>` : ""}</div>
         <div class="j-marks">${x.absent ? `<i class="mark absent">${esc(x.absent)}</i>` : ""}${x.mark ? `<i class="mark">${esc(x.mark)}</i>` : ""}</div>
       </div>`).join("") || `<div class="empty">В журнале пока пусто.</div>`}</div>`;
   const hl = body.querySelector(".j-row.hl");
@@ -1633,10 +1662,15 @@ async function checkUpdates(manual) {
     const has = u.available;
     $("#update-install").classList.toggle("hidden", !has);
     ["#update-dot", "#update-dot-m"].forEach((s) => $(s)?.classList.toggle("hidden", !has));
+    // Плашка на главном экране: видно сразу, без захода в настройки.
+    const ub = $("#upd-banner");
+    ub.classList.toggle("hidden", !has);
+    if (has) ub.html = `<span><b>Доступна версия ${esc(u.latest)}</b><small>у тебя ${esc(u.current)}</small></span><i>Обновить</i>`;
     if (has) {
-      msg.textContent = `Доступна версия ${u.latest}. ${u.notes ? u.notes.split("\n")[0].slice(0, 160) : ""}`;
+      // Описание релиза от GitHub — это ссылки и разметка, в окошке они только ломают вёрстку.
+      msg.textContent = `Доступна версия ${u.latest}.`;
       $("#update-install").textContent = "Обновить";
-      if (!manual) toast(`Вышла версия ${u.latest} — обновить можно в настройках`);
+      if (!manual) toast(`Вышла версия ${u.latest}`);
     } else if (manual) {
       msg.textContent = u.latest ? `У тебя последняя версия (${u.current}).` : "Релизов пока нет.";
     }
@@ -1649,6 +1683,10 @@ async function checkUpdates(manual) {
 }
 
 $("#update-check").addEventListener("click", () => checkUpdates(true));
+$("#upd-banner").addEventListener("click", () => {
+  go("settings");
+  setTimeout(() => $("#update-install").click(), 350);
+});
 $("#update-install").addEventListener("click", async () => {
   const u = upd.info;
   if (!u?.available) return;
@@ -1667,8 +1705,9 @@ $("#update-install").addEventListener("click", async () => {
 async function initUpdates() {
   if (!api.version) { $("#app-version").textContent = "демо"; return; }
   try { $("#app-version").textContent = `версия ${await api.version()}`; } catch {}
-  const last = Number(await api.load("update_checked")) || 0;
-  if (Date.now() - last > 20 * 3600_000) setTimeout(() => checkUpdates(false), 4000);
+  // Проверяем при каждом запуске и потом раз в 6 часов — это один короткий запрос к GitHub.
+  setTimeout(() => checkUpdates(false), 4000);
+  setInterval(() => { if (!document.hidden) checkUpdates(false); }, 6 * 3600_000);
 }
 
 // ---------- без масштабирования ----------

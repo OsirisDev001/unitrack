@@ -130,7 +130,8 @@ function demoPerformance(kdisc) {
   const start = new Date(year, 8, 1);
   const first = new Date(start.getFullYear(), start.getMonth(), start.getDate() - ((start.getDay() + 6) % 7));
   const now = new Date();
-  const until = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 14);
+  // Журнал заполняют с опозданием: последние дни ещё не внесены.
+  const until = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 3);
   let k = 0;
   for (let d = new Date(first); d < until; d.setDate(d.getDate() + 1)) {
     const wd = (d.getDay() + 6) % 7;

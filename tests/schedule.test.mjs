@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { normalizeSchedule } from "../src/logic.js";
 import {
   parseGroupTitle, shortGroup, groupCatalog, diffWeeks, changeText, dayTogether, whereNow,
-  subjectsWithTypes, occurrences, relinkTasks, slotLabel,
+  subjectsWithTypes, occurrences, relinkTasks, slotLabel, predictLessonNumbers,
 } from "../src/schedule.js";
 
 const L = (timeStart, timeEnd, title, type, room = "101", address = "Гаспадарчая, 23", sub = "") => ({
@@ -103,4 +103,28 @@ test("задачи к паре: ближайшие пары и перенос с
   const t2 = { id: "u", lesson: { subject: "Сети", type: "лаб.", date: "2026-11-16", start: "15:05" } };
   assert.equal(relinkTasks([t2], moved, [], new Set(["2026-11-02"]), now).length, 0);
   assert.equal(slotLabel("2026-11-04", "15:05"), "ср 15:05");
+});
+
+test("номера пар, которых ещё нет в журнале", () => {
+  const days = week({
+    "2026-10-26": [L("13:30", "14:55", "Сети", "практ. зан."), L("15:05", "16:30", "Сети", "лек.")],
+    "2026-10-30": [L("13:30", "14:55", "Сети", "практ. зан.")],
+    "2026-11-02": [L("13:30", "14:55", "Сети", "практ. зан."), L("15:05", "16:30", "Сети", "лек.")],
+    "2026-11-06": [L("13:30", "14:55", "Сети", "практ. зан.")],
+  });
+  const lessons = days.flatMap((d) => d.lessons.map((l) => ({ l, date: d.date.toISOString ? `${d.date.getFullYear()}-${String(d.date.getMonth() + 1).padStart(2, "0")}-${String(d.date.getDate()).padStart(2, "0")}` : d.date })));
+  // В журнале заполнены пары только по 26 октября включительно.
+  const journal = new Map([["777", [
+    { date: "2026-10-26", start: "13:30", label: "Практика", n: 7 },
+    { date: "2026-10-26", start: "15:05", label: "Лекция", n: 5 },
+  ]]]);
+  const p = predictLessonNumbers(lessons, journal);
+  assert.equal(p.get("2026-10-30|13:30").item.n, 8);
+  assert.equal(p.get("2026-11-02|13:30").item.n, 9);
+  assert.equal(p.get("2026-11-02|15:05").item.label, "Лекция");
+  assert.equal(p.get("2026-11-02|15:05").item.n, 6);
+  assert.equal(p.get("2026-11-06|13:30").item.n, 10);
+  assert.equal(p.has("2026-10-26|13:30"), false); // уже в журнале
+  // Предмета без совпавших пар не досчитываем.
+  assert.equal(predictLessonNumbers(lessons, new Map()).size, 0);
 });

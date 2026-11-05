@@ -228,3 +228,41 @@ export function relinkTasks(tasks, days, changes, realWeeks, now = new Date()) {
   }
   return changed;
 }
+
+// ---------- номера пар, которых ещё нет в журнале ----------
+
+const stampOf = (date, start) => `${date} ${String(start).padStart(5, "0")}`;
+
+/**
+ * Журнал заполняют после пары, поэтому у ближайших пар номера ещё нет.
+ * Досчитываем: последний номер из журнала + сколько таких же пар (предмет и вид) было в расписании после неё.
+ * Какой предмет журнала какой паре расписания соответствует, узнаём по уже совпавшим (дата и время) парам.
+ * lessons: [{ l: пара расписания, date: "YYYY-MM-DD" }], journal: Map(kdisc → items по порядку).
+ * → Map("дата|время" → { kdisc, item: { label, n, next: true, ... } })
+ */
+export function predictLessonNumbers(lessons, journal) {
+  const index = new Map();
+  for (const [kdisc, items] of journal) for (const it of items) index.set(`${it.date}|${it.start}`, { kdisc, item: it });
+  const sorted = [...lessons].sort((a, b) => stampOf(a.date, a.l.start).localeCompare(stampOf(b.date, b.l.start)));
+  const link = new Map();
+  for (const { l, date } of sorted) {
+    const hit = index.get(`${date}|${l.start}`);
+    if (hit) link.set(`${l.title}|${l.type}`, { kdisc: hit.kdisc, label: hit.item.label });
+  }
+  const last = new Map();
+  for (const [kdisc, items] of journal) for (const it of items) last.set(`${kdisc}|${it.label}`, it);
+  const count = new Map();
+  const out = new Map();
+  for (const { l, date } of sorted) {
+    const key = `${date}|${l.start}`;
+    if (index.has(key)) continue;
+    const m = link.get(`${l.title}|${l.type}`);
+    const lastIt = m && last.get(`${m.kdisc}|${m.label}`);
+    if (!lastIt || stampOf(date, l.start) <= stampOf(lastIt.date, lastIt.start)) continue;
+    const ck = `${m.kdisc}|${m.label}`;
+    const n = (count.get(ck) ?? lastIt.n) + 1;
+    count.set(ck, n);
+    out.set(key, { kdisc: m.kdisc, item: { label: m.label, n, topic: "", mark: "", absent: "", seq: "", date, start: l.start, next: true } });
+  }
+  return out;
+}
