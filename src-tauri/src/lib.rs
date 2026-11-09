@@ -373,7 +373,7 @@ fn cached_week(state: State<'_, AppState>, monday: String) -> Option<String> {
 }
 
 /// Иконки приложения на выбор (как в Дискорде).
-const APP_ICONS: &[&str] = &["lilac", "night", "minimal", "gradient", "mint", "sunset", "ocean", "calendar", "notebook", "pixel", "mono"];
+const APP_ICONS: &[&str] = &["lilac", "night", "minimal", "mint", "sunset", "letter", "cap", "book", "owl", "planet", "rocket", "bulb", "pencil", "coffee"];
 
 /// Сменить иконку: на Android — иконку на рабочем столе, на Windows — иконку окна и панели задач.
 #[tauri::command]
@@ -392,14 +392,17 @@ fn set_app_icon(app: tauri::AppHandle, name: String) -> Result<(), String> {
             "lilac" => include_bytes!("../icons/alt/lilac.png"),
             "night" => include_bytes!("../icons/alt/night.png"),
             "minimal" => include_bytes!("../icons/alt/minimal.png"),
-            "gradient" => include_bytes!("../icons/alt/gradient.png"),
             "mint" => include_bytes!("../icons/alt/mint.png"),
             "sunset" => include_bytes!("../icons/alt/sunset.png"),
-            "ocean" => include_bytes!("../icons/alt/ocean.png"),
-            "calendar" => include_bytes!("../icons/alt/calendar.png"),
-            "notebook" => include_bytes!("../icons/alt/notebook.png"),
-            "pixel" => include_bytes!("../icons/alt/pixel.png"),
-            "mono" => include_bytes!("../icons/alt/mono.png"),
+            "letter" => include_bytes!("../icons/alt/letter.png"),
+            "cap" => include_bytes!("../icons/alt/cap.png"),
+            "book" => include_bytes!("../icons/alt/book.png"),
+            "owl" => include_bytes!("../icons/alt/owl.png"),
+            "planet" => include_bytes!("../icons/alt/planet.png"),
+            "rocket" => include_bytes!("../icons/alt/rocket.png"),
+            "bulb" => include_bytes!("../icons/alt/bulb.png"),
+            "pencil" => include_bytes!("../icons/alt/pencil.png"),
+            "coffee" => include_bytes!("../icons/alt/coffee.png"),
             _ => return Err("Нет такой иконки".into()),
         };
         let img = tauri::image::Image::from_bytes(bytes).map_err(|e| e.to_string())?;

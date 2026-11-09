@@ -190,11 +190,18 @@ export function subjectsWithTypes(days, now = new Date()) {
   return [...map.values()].sort((a, b) => a.next - b.next || a.subject.localeCompare(b.subject, "ru"));
 }
 
+/** Вид пары без хвостов: «практ. зан.» и «практ.зан» → «практ». */
+export const kindOf = (type) => {
+  const t = String(type || "").toLowerCase();
+  return t.startsWith("лек") ? "лек" : t.startsWith("практ") ? "практ" : t.startsWith("лаб") ? "лаб" : t.startsWith("сем") ? "сем" : t.trim();
+};
+const sameKind = (a, b) => kindOf(a) === kindOf(b);
+
 /** Ближайшие n пар предмета (и вида, если задан) после момента from. */
 export function occurrences(days, subject, type, from = new Date(), n = 3) {
   return days
     .flatMap((d) => d.lessons.map((l) => ({ ...l, date: isoDate(d.date), forecast: !!(l.forecast || d.forecast) })))
-    .filter((l) => l.title === subject && (!type || l.type === type) && at(l) > from)
+    .filter((l) => l.title === subject && (!type || sameKind(l.type, type)) && at(l) > from)
     .sort((a, b) => at(a) - at(b))
     .slice(0, n);
 }
@@ -212,10 +219,10 @@ export function relinkTasks(tasks, days, changes, realWeeks, now = new Date()) {
   const all = days.flatMap((d) => d.lessons.map((l) => ({ ...l, date: isoDate(d.date), forecast: !!(l.forecast || d.forecast) })));
   for (const t of tasks) {
     const k = t.lesson;
-    if (!k || t.done || t.deleted) continue;
+    if (!k || k.pending || t.done || t.deleted) continue;
     if (new Date(`${k.date}T${k.start.padStart(5, "0")}`) < addDays(now, -1)) continue;
     if (!realWeeks.has(isoDate(mondayOf(parseIsoDate(k.date))))) continue;
-    const same = (l) => l.title === k.subject && (!k.type || l.type === k.type);
+    const same = (l) => l.title === k.subject && (!k.type || sameKind(l.type, k.type));
     if (all.some((l) => same(l) && l.date === k.date && l.start === k.start)) continue;
     const moved = changes.find((c) => c.kind === "moved" && c.before.date === k.date && c.before.start === k.start && c.title === k.subject);
     const target = moved?.after || all.filter((l) => same(l) && l.date >= k.date).sort((a, b) => at(a) - at(b))[0];

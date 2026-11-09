@@ -103,6 +103,10 @@ test("задачи к паре: ближайшие пары и перенос с
   const t2 = { id: "u", lesson: { subject: "Сети", type: "лаб.", date: "2026-11-16", start: "15:05" } };
   assert.equal(relinkTasks([t2], moved, [], new Set(["2026-11-02"]), now).length, 0);
   assert.equal(slotLabel("2026-11-04", "15:05"), "ср 15:05");
+  // Задача «к следующей практике», которой ещё нет в расписании, — не трогаем и не падаем.
+  const t3 = { id: "w", lesson: { subject: "Сети", type: "практ. зан.", pending: true } };
+  assert.equal(relinkTasks([t3], moved, changes, new Set(["2026-11-02"]), now).length, 0);
+  assert.equal(t3.lesson.pending, true);
 });
 
 test("номера пар, которых ещё нет в журнале", () => {

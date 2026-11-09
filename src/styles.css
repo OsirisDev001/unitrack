@@ -572,7 +572,9 @@ dialog::backdrop { background: rgba(8, 6, 12, 0.65); backdrop-filter: blur(4px);
 .grid-today + .chg-banner, #chg-banner-today { margin-bottom: 16px; }
 .day-chip { position: relative; }
 .chg-dot { position: absolute; top: 6px; right: 8px; width: 7px; height: 7px; border-radius: 50%; background: var(--warn); box-shadow: 0 0 10px var(--warn); }
-.lesson.changed { background: linear-gradient(90deg, color-mix(in srgb, var(--warn) 8%, transparent), transparent); }
+/* Изменённая пара: тонкая жёлтая полоса слева, без заливки (подробности — в плашке под парой) */
+.lesson.changed { position: relative; }
+.lesson.changed::before { content: ""; position: absolute; left: -9px; top: 14px; bottom: 14px; width: 3px; border-radius: 3px; background: var(--warn); box-shadow: 0 0 10px color-mix(in srgb, var(--warn) 60%, transparent); }
 .chg { color: var(--warn-text); }
 .chg-note { display: inline-block; margin-top: 6px; font-size: 12px; font-weight: 700; color: var(--warn-text); background: color-mix(in srgb, var(--warn) 12%, transparent); padding: 3px 9px; border-radius: 8px; }
 .chg-note.gone { color: var(--pink-text); background: color-mix(in srgb, var(--pink) 12%, transparent); }
@@ -625,7 +627,7 @@ dialog::backdrop { background: rgba(8, 6, 12, 0.65); backdrop-filter: blur(4px);
 .quick-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 22px; }
 .quick-chips:empty { display: none; }
 .quick-chips .pchip small { font-weight: 600; opacity: .75; margin-left: 4px; }
-#task-dialog .lbl { font-size: 13px; color: var(--muted); font-weight: 700; margin: 12px 0 6px; }
+#skip-dialog .lbl, #task-dialog .lbl { font-size: 13px; color: var(--muted); font-weight: 700; margin: 12px 0 6px; }
 #task-dialog .lbl small { font-weight: 500; opacity: .7; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .pchip { border: 1px solid var(--line); background: var(--surface); color: var(--muted); font: inherit; font-size: 13px; font-weight: 700; padding: 7px 12px; border-radius: 999px; cursor: pointer; transition: transform .35s var(--spring), background .2s, color .2s; }
@@ -799,21 +801,6 @@ html, body { touch-action: pan-x pan-y; -webkit-text-size-adjust: 100%; text-siz
 /* ================= Стиль карточек (плиток) =================
    Отдельно от цвета: «материал» карточек, кнопок дней и разделов «Учёбы». */
 :root { --cards-sel: 0; }
-/* Стекло: полупрозрачные карточки над цветным «сиянием» фона */
-[data-cards="glass"] body {
-  background: radial-gradient(560px 460px at 0% 0%, color-mix(in srgb, var(--accent) 38%, transparent), transparent 70%),
-    radial-gradient(560px 560px at 100% 45%, color-mix(in srgb, var(--accent-2) 32%, transparent), transparent 70%),
-    radial-gradient(520px 420px at 20% 100%, color-mix(in srgb, var(--grad-c) 30%, transparent), transparent 70%), var(--bg);
-  background-attachment: fixed;
-}
-[data-cards="glass"] .card, [data-cards="glass"] .sx-card, [data-cards="glass"] .day-chip:not(.active) {
-  background: color-mix(in srgb, var(--surface) 42%, transparent); backdrop-filter: blur(22px) saturate(1.3);
-  border: 1px solid color-mix(in srgb, #ffffff 13%, transparent); box-shadow: inset 0 1px 0 color-mix(in srgb, #ffffff 12%, transparent);
-}
-/* Контур: без заливки, только рамка */
-[data-cards="outline"] .card, [data-cards="outline"] .sx-card, [data-cards="outline"] .day-chip:not(.active) {
-  background: transparent; border: 1.5px solid color-mix(in srgb, var(--accent) 30%, var(--line-2)); box-shadow: none;
-}
 /* Цветные: карточки залиты оттенком акцента */
 [data-cards="tint"] .card, [data-cards="tint"] .sx-card, [data-cards="tint"] .day-chip:not(.active) {
   background: color-mix(in srgb, var(--accent) 15%, var(--surface)); border-color: transparent;
@@ -828,27 +815,53 @@ html, body { touch-action: pan-x pan-y; -webkit-text-size-adjust: 100%; text-siz
 [data-cards="sharp"] .card, [data-cards="sharp"] .sx-card, [data-cards="sharp"] .day-chip, [data-cards="sharp"] .fav, [data-cards="sharp"] .btn, [data-cards="sharp"] .who-fab,
 [data-cards="sharp"] .icon-btn, [data-cards="sharp"] .tag, [data-cards="sharp"] .sx-ico { border-radius: 6px; }
 [data-cards="sharp"] .card, [data-cards="sharp"] .sx-card { border-left: 3px solid var(--accent); }
-/* Аура: переливающаяся градиентная рамка */
-[data-cards="aura"] .card, [data-cards="aura"] .sx-card, [data-cards="aura"] .day-chip:not(.active) {
-  border: 1.5px solid transparent;
-  background: linear-gradient(var(--surface), var(--surface)) padding-box,
-    linear-gradient(135deg, var(--accent), var(--grad-c) 45%, var(--sem) 75%, var(--accent)) border-box;
+/* Неон: светящаяся рамка */
+[data-cards="neon"] .card, [data-cards="neon"] .sx-card, [data-cards="neon"] .day-chip:not(.active) {
+  background: var(--bg-2); border: 1px solid color-mix(in srgb, var(--accent) 60%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 12%, transparent), 0 0 26px -6px color-mix(in srgb, var(--accent-2) 55%, transparent), inset 0 0 22px -12px color-mix(in srgb, var(--accent) 40%, transparent);
 }
-/* Объём: мягкие «выдавленные» карточки (неоморфизм) */
-[data-cards="soft3d"] .card, [data-cards="soft3d"] .sx-card, [data-cards="soft3d"] .day-chip:not(.active) {
-  background: var(--surface); border-color: transparent;
-  box-shadow: 9px 9px 22px color-mix(in srgb, #000000 55%, transparent), -7px -7px 18px color-mix(in srgb, #ffffff 6%, transparent);
+/* Строгие: маленькие скругления и акцентная полоса слева */
+[data-cards="sharp"] { --radius: 6px; --radius-sm: 6px; }
+[data-cards="sharp"] .card, [data-cards="sharp"] .sx-card, [data-cards="sharp"] .day-chip, [data-cards="sharp"] .fav, [data-cards="sharp"] .btn, [data-cards="sharp"] .who-fab,
+[data-cards="sharp"] .icon-btn, [data-cards="sharp"] .tag, [data-cards="sharp"] .sx-ico { border-radius: 6px; }
+[data-cards="sharp"] .card, [data-cards="sharp"] .sx-card { border-left: 3px solid var(--accent); }
+/* Матовое стекло: яркие цветные пятна за полупрозрачными размытыми плитками */
+[data-cards="frost"] body {
+  background: radial-gradient(420px 380px at 8% 6%, color-mix(in srgb, var(--accent) 70%, transparent), transparent 72%),
+    radial-gradient(460px 420px at 100% 38%, color-mix(in srgb, var(--pink) 55%, transparent), transparent 72%),
+    radial-gradient(440px 400px at 10% 78%, color-mix(in srgb, var(--accent-2) 55%, transparent), transparent 72%),
+    radial-gradient(380px 340px at 90% 100%, color-mix(in srgb, var(--grad-c) 60%, transparent), transparent 72%), var(--bg);
+  background-attachment: fixed;
 }
-[data-theme^="light"][data-cards="soft3d"] .card, [data-theme^="light"][data-cards="soft3d"] .sx-card, [data-theme^="light"][data-cards="soft3d"] .day-chip:not(.active) {
-  background: var(--bg); box-shadow: 9px 9px 20px color-mix(in srgb, #000000 12%, transparent), -8px -8px 18px #ffffff;
+[data-cards="frost"] .card, [data-cards="frost"] .sx-card, [data-cards="frost"] .day-chip:not(.active) {
+  background: color-mix(in srgb, var(--surface) 34%, transparent); backdrop-filter: blur(26px) saturate(1.5); -webkit-backdrop-filter: blur(26px) saturate(1.5);
+  border: 1px solid color-mix(in srgb, #ffffff 20%, transparent); box-shadow: inset 0 1px 0 color-mix(in srgb, #ffffff 18%, transparent), 0 10px 30px -14px rgba(0,0,0,.5);
 }
-/* Голограмма: радужная рамка и мягкий блик */
-[data-cards="holo"] .card, [data-cards="holo"] .sx-card, [data-cards="holo"] .day-chip:not(.active) {
-  border: 1.5px solid transparent;
-  background: linear-gradient(115deg, transparent 30%, color-mix(in srgb, #ffffff 7%, transparent) 45%, transparent 60%) padding-box,
-    linear-gradient(var(--surface), var(--surface)) padding-box,
-    conic-gradient(from 200deg, #ff9ad5, #a98bff, #7fd8ff, #8ef0c0, #ffe58a, #ff9ad5) border-box;
+/* Градиент: плитки залиты цветом темы с переливом */
+[data-cards="gradient"] .card, [data-cards="gradient"] .sx-card, [data-cards="gradient"] .day-chip:not(.active) {
+  border-color: transparent;
+  background: linear-gradient(140deg, color-mix(in srgb, var(--accent) 42%, var(--surface)), color-mix(in srgb, var(--grad-c) 26%, var(--surface)) 55%, color-mix(in srgb, var(--pink) 16%, var(--surface)));
 }
+/* Пастель: у каждой плитки свой мягкий цвет */
+[data-cards="pastel"] :is(.card, .sx-card):nth-child(6n+1) { --pc: #b9a2ff; }
+[data-cards="pastel"] :is(.card, .sx-card):nth-child(6n+2) { --pc: #ff9ab3; }
+[data-cards="pastel"] :is(.card, .sx-card):nth-child(6n+3) { --pc: #8fe3b5; }
+[data-cards="pastel"] :is(.card, .sx-card):nth-child(6n+4) { --pc: #ffc078; }
+[data-cards="pastel"] :is(.card, .sx-card):nth-child(6n+5) { --pc: #7cc8ff; }
+[data-cards="pastel"] :is(.card, .sx-card):nth-child(6n+6) { --pc: #ffe08a; }
+[data-cards="pastel"] .card, [data-cards="pastel"] .sx-card {
+  background: color-mix(in srgb, var(--pc, var(--accent)) 30%, var(--surface)); border-color: color-mix(in srgb, var(--pc, var(--accent)) 50%, transparent);
+}
+[data-cards="pastel"] .day-chip:not(.active) { background: color-mix(in srgb, var(--accent) 10%, var(--surface)); }
+/* Пиксель: ступенчатые рамки, как в старых играх */
+[data-cards="pixel"] .card, [data-cards="pixel"] .sx-card, [data-cards="pixel"] .day-chip:not(.active), [data-cards="pixel"] .day-chip.active {
+  --px: color-mix(in srgb, var(--accent) 75%, var(--line-2));
+  border: 4px solid var(--px); border-radius: 0;
+  box-shadow: inset -4px -4px 0 color-mix(in srgb, #000000 28%, transparent), inset 4px 4px 0 color-mix(in srgb, #ffffff 7%, transparent);
+  clip-path: polygon(4px 0, calc(100% - 4px) 0, calc(100% - 4px) 4px, 100% 4px, 100% calc(100% - 4px), calc(100% - 4px) calc(100% - 4px),
+    calc(100% - 4px) 100%, 4px 100%, 4px calc(100% - 4px), 0 calc(100% - 4px), 0 4px, 4px 4px);
+}
+[data-cards="pixel"] .day-chip.active { --px: var(--accent); }
 /* Брутализм: толстая рамка и жёсткая тень */
 [data-cards="brutal"] .card, [data-cards="brutal"] .sx-card, [data-cards="brutal"] .day-chip:not(.active) {
   background: var(--surface); border: 2px solid var(--text); border-radius: 10px; box-shadow: 5px 5px 0 var(--accent);
@@ -893,6 +906,40 @@ html, body { touch-action: pan-x pan-y; -webkit-text-size-adjust: 100%; text-siz
 }
 [data-cards="sticker"] .sx-card { position: relative; }
 
+/* ---------- Нижняя панель (на компьютере — боковая) в стиле плиток ----------
+   У панели рисуется только одна сторона рамки (верх на телефоне, правая на ПК), поэтому border-width задаём целиком. */
+[data-cards="frost"] .nav { background: color-mix(in srgb, var(--surface) 34%, transparent); backdrop-filter: blur(26px) saturate(1.5); -webkit-backdrop-filter: blur(26px) saturate(1.5); border-color: color-mix(in srgb, #ffffff 20%, transparent); }
+[data-cards="frost"] .nav-pill { background: color-mix(in srgb, #ffffff 14%, transparent); box-shadow: inset 0 1px 0 color-mix(in srgb, #ffffff 20%, transparent); }
+[data-cards="gradient"] .nav { border-color: transparent; background: linear-gradient(100deg, color-mix(in srgb, var(--accent) 36%, var(--surface)), color-mix(in srgb, var(--grad-c) 22%, var(--surface)) 55%, color-mix(in srgb, var(--pink) 16%, var(--surface))); }
+[data-cards="gradient"] .nav-pill { background: color-mix(in srgb, #ffffff 16%, transparent); box-shadow: none; }
+[data-cards="pastel"] .nav-pill { background: color-mix(in srgb, var(--pink) 26%, var(--surface)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--pink) 45%, transparent); }
+[data-cards="neon"] .nav { background: var(--bg-2); border-color: color-mix(in srgb, var(--accent) 60%, transparent); box-shadow: 0 -10px 30px -14px color-mix(in srgb, var(--accent-2) 60%, transparent); }
+[data-cards="neon"] .nav-pill { background: transparent; box-shadow: inset 0 0 0 1px var(--accent), 0 0 18px -4px color-mix(in srgb, var(--accent) 70%, transparent); }
+[data-cards="tint"] .nav { background: color-mix(in srgb, var(--accent) 15%, var(--surface)); border-color: transparent; }
+[data-cards="tint"] .nav-pill { background: color-mix(in srgb, var(--accent) 28%, var(--surface)); }
+[data-cards="pixel"] .nav { border-width: 4px; border-color: color-mix(in srgb, var(--accent) 75%, var(--line-2)); background: var(--bg-2); backdrop-filter: none; }
+[data-cards="pixel"] .nav-pill { border-radius: 0; background: color-mix(in srgb, var(--accent) 22%, transparent); box-shadow: inset 0 0 0 3px var(--accent), inset -3px -3px 0 4px color-mix(in srgb, #000000 25%, transparent); }
+[data-cards="brutal"] .nav { border-width: 3px; border-color: var(--text); background: var(--surface); backdrop-filter: none; }
+[data-cards="brutal"] .nav-pill { border-radius: 10px; background: var(--accent-soft); box-shadow: inset 0 0 0 2px var(--text), 3px 3px 0 var(--accent); }
+[data-cards="sticker"] .nav { background: var(--surface-2); border-color: transparent; box-shadow: 0 -12px 24px -14px color-mix(in srgb, #000000 70%, transparent); }
+[data-cards="sticker"] .nav-btn.active .ico { transform: scale(1.08) rotate(-8deg); }
+[data-cards="paper"] .nav { border-width: 2px; border-color: color-mix(in srgb, var(--danger) 45%, transparent);
+  background: repeating-linear-gradient(180deg, transparent 0 12px, color-mix(in srgb, var(--accent) 13%, transparent) 12px 13px), var(--surface); }
+[data-cards="paper"] .nav-pill { border-radius: 6px; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 40%, transparent); }
+[data-cards="blueprint"] .nav { border-right-style: dashed; border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  background: linear-gradient(color-mix(in srgb, var(--accent) 8%, transparent) 1px, transparent 1px) 0 0 / 22px 22px,
+    linear-gradient(90deg, color-mix(in srgb, var(--accent) 8%, transparent) 1px, transparent 1px) 0 0 / 22px 22px, color-mix(in srgb, var(--accent) 4%, var(--bg)); }
+@media (max-width: 760px) { [data-cards="blueprint"] .nav { border-right-style: none; border-top-style: dashed; } }
+[data-cards="blueprint"] .nav-pill { border-radius: 4px; background: transparent; box-shadow: inset 0 0 0 1px var(--accent); outline: 1px dashed color-mix(in srgb, var(--accent) 45%, transparent); outline-offset: 3px; }
+[data-cards="corners"] .nav-pill { --c: var(--accent); border-radius: 4px; box-shadow: none;
+  background: linear-gradient(var(--c), var(--c)) top left / 12px 2px no-repeat, linear-gradient(var(--c), var(--c)) top left / 2px 12px no-repeat,
+    linear-gradient(var(--c), var(--c)) top right / 12px 2px no-repeat, linear-gradient(var(--c), var(--c)) top right / 2px 12px no-repeat,
+    linear-gradient(var(--c), var(--c)) bottom left / 12px 2px no-repeat, linear-gradient(var(--c), var(--c)) bottom left / 2px 12px no-repeat,
+    linear-gradient(var(--c), var(--c)) bottom right / 12px 2px no-repeat, linear-gradient(var(--c), var(--c)) bottom right / 2px 12px no-repeat,
+    color-mix(in srgb, var(--accent) 10%, transparent); }
+[data-cards="sharp"] .nav { border-width: 2px; border-color: var(--accent); }
+[data-cards="sharp"] .nav-pill { border-radius: 6px; }
+
 /* Выбор иконки приложения */
 .icon-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(76px, 1fr)); gap: 10px; }
 .icon-sw { display: grid; gap: 6px; justify-items: center; padding: 10px 4px; border-radius: 16px; border: 1px solid var(--line); background: var(--surface-2);
@@ -900,3 +947,21 @@ html, body { touch-action: pan-x pan-y; -webkit-text-size-adjust: 100%; text-siz
 .icon-sw:active { transform: scale(.94); }
 .icon-sw.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
 .icon-sw img { width: 52px; height: 52px; filter: drop-shadow(0 6px 12px rgba(0,0,0,.35)); }
+
+
+/* Свои записи о пропусках, которых ещё нет на портале */
+#skip-dialog .opts { display: grid; grid-template-columns: 1fr; gap: 8px; }
+#skip-dialog .opt.sd-lesson { display: grid; grid-template-columns: 52px 1fr 26px; }
+.sd-lesson { display: grid; grid-template-columns: 52px 1fr 26px; align-items: center; gap: 10px; text-align: left; }
+.sd-lesson .tick { width: 24px; height: 24px; border-radius: 8px; border: 1.5px solid var(--line-2); display: grid; place-items: center; font-weight: 900; color: transparent; }
+.sd-lesson.on .tick { background: var(--pink); border-color: var(--pink); color: var(--on-danger); }
+.sd-lesson .t { font-weight: 800; }
+.sd-lesson .s { display: grid; gap: 2px; min-width: 0; }
+.sd-lesson .s small { color: var(--muted); font-size: 12px; }
+.skip-row.pend-row { grid-template-columns: 1fr auto; grid-template-areas: "when acts" "subj acts"; row-gap: 2px; }
+.pend-row > span:first-child { grid-area: when; color: var(--muted); font-size: 13px; }
+.pend-row .pend-subj { grid-area: subj; font-weight: 600; }
+.pend-row .pend-acts { grid-area: acts; display: flex; gap: 6px; align-items: center; }
+.pend-acts .pchip { padding: 4px 10px; font-size: 12px; }
+.icon-btn.sm { width: 30px; height: 30px; font-size: 16px; }
+.pend-hint { margin: 8px 2px 18px; }

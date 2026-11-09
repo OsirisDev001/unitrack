@@ -156,7 +156,7 @@
 
       <!-- Пропуски -->
       <section class="view" data-view="skips">
-        <header class="view-head"><h1>Пропуски</h1></header>
+        <header class="view-head"><h1>Пропуски</h1><button class="btn btn-primary" id="skip-add-btn" aria-label="Добавить пропуск">+ Пропуск</button></header>
         <div id="skips-summary" class="rise"></div>
         <div id="skips-list"></div>
       </section>
@@ -244,6 +244,18 @@
   <div class="toast hidden" id="toast" role="status"></div>
 
   <!-- Редактор задачи -->
+  <dialog id="skip-dialog">
+    <form method="dialog">
+      <h2>Пропущенная пара</h2>
+      <p class="muted small">Если деканат ещё не внёс. Запись сама исчезнет, когда пропуск появится на портале.</p>
+      <div class="lbl">День</div>
+      <div class="chips" id="sd-days"></div>
+      <div class="lbl">Какие пары пропустил</div>
+      <div class="opts" id="sd-lessons"></div>
+      <div class="dialog-actions"><span class="spacer"></span><button type="submit" class="btn btn-primary">Готово</button></div>
+    </form>
+  </dialog>
+
   <dialog id="task-dialog">
     <form method="dialog" id="task-form">
       <h2 id="task-dialog-title">Новая задача</h2>
@@ -253,7 +265,7 @@
       <div class="lbl">Предмет <small>из твоего расписания</small></div>
       <div class="chips" id="t-subjects"></div>
       <input id="t-subject" class="hidden" maxlength="120" placeholder="Свой предмет" aria-label="Предмет" />
-      <div id="t-types-wrap"><div class="lbl">Пара</div><div class="chips" id="t-types"></div></div>
+      <div id="t-types-wrap"><div class="lbl">К какой паре</div><div class="chips" id="t-types"></div></div>
       <div class="lbl">Сдать к</div>
       <div class="opts" id="t-when"></div>
       <input id="t-due" type="datetime-local" class="hidden" aria-label="Своя дата" />

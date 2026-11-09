@@ -52,19 +52,6 @@
             </intent-filter>
         </activity-alias>
         <activity-alias
-            android:name="by.tomashevich.unitrack.IconGradient"
-            android:targetActivity="by.tomashevich.unitrack.MainActivity"
-            android:enabled="false"
-            android:exported="true"
-            android:label="UniTrack"
-            android:icon="@mipmap/ic_alt_gradient"
-            android:roundIcon="@mipmap/ic_alt_gradient">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-        </activity-alias>
-        <activity-alias
             android:name="by.tomashevich.unitrack.IconMint"
             android:targetActivity="by.tomashevich.unitrack.MainActivity"
             android:enabled="false"
@@ -91,13 +78,144 @@
             </intent-filter>
         </activity-alias>
         <activity-alias
+            android:name="by.tomashevich.unitrack.IconLetter"
+            android:targetActivity="by.tomashevich.unitrack.MainActivity"
+            android:enabled="false"
+            android:exported="true"
+            android:label="UniTrack"
+            android:icon="@mipmap/ic_alt_letter"
+            android:roundIcon="@mipmap/ic_alt_letter">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name="by.tomashevich.unitrack.IconCap"
+            android:targetActivity="by.tomashevich.unitrack.MainActivity"
+            android:enabled="false"
+            android:exported="true"
+            android:label="UniTrack"
+            android:icon="@mipmap/ic_alt_cap"
+            android:roundIcon="@mipmap/ic_alt_cap">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name="by.tomashevich.unitrack.IconBook"
+            android:targetActivity="by.tomashevich.unitrack.MainActivity"
+            android:enabled="false"
+            android:exported="true"
+            android:label="UniTrack"
+            android:icon="@mipmap/ic_alt_book"
+            android:roundIcon="@mipmap/ic_alt_book">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name="by.tomashevich.unitrack.IconOwl"
+            android:targetActivity="by.tomashevich.unitrack.MainActivity"
+            android:enabled="false"
+            android:exported="true"
+            android:label="UniTrack"
+            android:icon="@mipmap/ic_alt_owl"
+            android:roundIcon="@mipmap/ic_alt_owl">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name="by.tomashevich.unitrack.IconPlanet"
+            android:targetActivity="by.tomashevich.unitrack.MainActivity"
+            android:enabled="false"
+            android:exported="true"
+            android:label="UniTrack"
+            android:icon="@mipmap/ic_alt_planet"
+            android:roundIcon="@mipmap/ic_alt_planet">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name="by.tomashevich.unitrack.IconRocket"
+            android:targetActivity="by.tomashevich.unitrack.MainActivity"
+            android:enabled="false"
+            android:exported="true"
+            android:label="UniTrack"
+            android:icon="@mipmap/ic_alt_rocket"
+            android:roundIcon="@mipmap/ic_alt_rocket">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name="by.tomashevich.unitrack.IconBulb"
+            android:targetActivity="by.tomashevich.unitrack.MainActivity"
+            android:enabled="false"
+            android:exported="true"
+            android:label="UniTrack"
+            android:icon="@mipmap/ic_alt_bulb"
+            android:roundIcon="@mipmap/ic_alt_bulb">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name="by.tomashevich.unitrack.IconPencil"
+            android:targetActivity="by.tomashevich.unitrack.MainActivity"
+            android:enabled="false"
+            android:exported="true"
+            android:label="UniTrack"
+            android:icon="@mipmap/ic_alt_pencil"
+            android:roundIcon="@mipmap/ic_alt_pencil">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name="by.tomashevich.unitrack.IconCoffee"
+            android:targetActivity="by.tomashevich.unitrack.MainActivity"
+            android:enabled="false"
+            android:exported="true"
+            android:label="UniTrack"
+            android:icon="@mipmap/ic_alt_coffee"
+            android:roundIcon="@mipmap/ic_alt_coffee">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <!-- Иконки из 0.3.0: остались, чтобы у выбравших их не пропал ярлык; приложение само переключит на «Сирень». -->
+        <activity-alias
+            android:name="by.tomashevich.unitrack.IconGradient"
+            android:targetActivity="by.tomashevich.unitrack.MainActivity"
+            android:enabled="false"
+            android:exported="true"
+            android:label="UniTrack"
+            android:icon="@mipmap/ic_alt_lilac"
+            android:roundIcon="@mipmap/ic_alt_lilac">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
             android:name="by.tomashevich.unitrack.IconOcean"
             android:targetActivity="by.tomashevich.unitrack.MainActivity"
             android:enabled="false"
             android:exported="true"
             android:label="UniTrack"
-            android:icon="@mipmap/ic_alt_ocean"
-            android:roundIcon="@mipmap/ic_alt_ocean">
+            android:icon="@mipmap/ic_alt_lilac"
+            android:roundIcon="@mipmap/ic_alt_lilac">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -109,8 +227,8 @@
             android:enabled="false"
             android:exported="true"
             android:label="UniTrack"
-            android:icon="@mipmap/ic_alt_calendar"
-            android:roundIcon="@mipmap/ic_alt_calendar">
+            android:icon="@mipmap/ic_alt_lilac"
+            android:roundIcon="@mipmap/ic_alt_lilac">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -122,8 +240,8 @@
             android:enabled="false"
             android:exported="true"
             android:label="UniTrack"
-            android:icon="@mipmap/ic_alt_notebook"
-            android:roundIcon="@mipmap/ic_alt_notebook">
+            android:icon="@mipmap/ic_alt_lilac"
+            android:roundIcon="@mipmap/ic_alt_lilac">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -135,8 +253,8 @@
             android:enabled="false"
             android:exported="true"
             android:label="UniTrack"
-            android:icon="@mipmap/ic_alt_pixel"
-            android:roundIcon="@mipmap/ic_alt_pixel">
+            android:icon="@mipmap/ic_alt_lilac"
+            android:roundIcon="@mipmap/ic_alt_lilac">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -148,8 +266,8 @@
             android:enabled="false"
             android:exported="true"
             android:label="UniTrack"
-            android:icon="@mipmap/ic_alt_mono"
-            android:roundIcon="@mipmap/ic_alt_mono">
+            android:icon="@mipmap/ic_alt_lilac"
+            android:roundIcon="@mipmap/ic_alt_lilac">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

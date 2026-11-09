@@ -1,5 +1,5 @@
 import {
-  DEFAULT_LIMIT, normalizeSkips, semesterStats, semesterOf, groupBySemester, normalizeSchedule,
+  DEFAULT_LIMIT, normalizeSkips, semesterStats, pendingSkips, semesterOf, groupBySemester, normalizeSchedule,
   lessonStatus, nextLesson, subjectsFrom, taskBucket, BUCKETS, sortTasks, relativeDue, sameDay,
   pluralHours, pluralPairs, lessonPhase, HALF, BREAK,
   normalizeTeachers, mondayOf, addDays, isoDate, buildWeek, weekLessons, forecastWeek, weekLabel, parseIsoDate,
@@ -7,7 +7,7 @@ import {
 import { demoBackend } from "./demo.js";
 import {
   groupCatalog, shortGroup, diffWeeks, slotKey, changeText, durationText, whereNow,
-  relinkTasks, subjectsWithTypes, occurrences, lessonDue, slotLabel, dayTogether, predictLessonNumbers,
+  relinkTasks, subjectsWithTypes, occurrences, kindOf, lessonDue, slotLabel, dayTogether, predictLessonNumbers,
 } from "./schedule.js";
 import {
   normalizeProgress, progressBySemester, normalizeAttestation, normalizeRating, normalizeLibrary, normalizeHostel,
@@ -70,6 +70,7 @@ const state = {
   viewing: null,       // чьё расписание открыто: null — моё, иначе { kind, id, title, sub }
   otherRaw: new Map(), // чужие недели: "kind:id:понедельник" → ответ API
   favorites: [],       // синхронизируется между устройствами, как задачи
+  skipMarks: [],       // свои записи о пропусках, пока деканат не внёс; тоже синхронизируются
   changes: {},         // понедельник → { list, seen } — что поменялось в моём расписании
   search: { tab: "group", faculties: null, catalogs: {}, openFaculty: null, openSpec: null, query: "", student: null, studentErr: "", busy: false },
   windowsWith: null,
@@ -115,7 +116,9 @@ async function loadLocal() {
   try { Object.assign(state.settings, JSON.parse((await api.load("settings")) || "{}")); } catch {}
   try { state.lastSync = Number(await api.load("last_sync")) || null; } catch {}
   try { state.favorites = JSON.parse((await api.load("favorites")) || "[]"); } catch { state.favorites = []; }
-  try { state.changes = JSON.parse((await api.load("sched_changes")) || "{}"); } catch { state.changes = {}; }
+  try { state.skipMarks = JSON.parse((await api.load("skip_marks")) || "[]"); } catch { state.skipMarks = []; }
+  // 0.3.1: новый ключ — старые пометки копились и с выходных, пока неделю только заполняли; начинаем с чистого листа.
+  try { state.changes = JSON.parse((await api.load("sched_changes2")) || "{}"); } catch { state.changes = {}; }
   const old = isoDate(addDays(mondayOf(new Date()), -7));
   for (const k of Object.keys(state.changes)) if (k < old) delete state.changes[k];
 }
@@ -127,7 +130,7 @@ async function saveTasks() {
   scheduleSync();
 }
 const saveSettings = () => api.save("settings", JSON.stringify(state.settings));
-const saveChanges = () => api.save("sched_changes", JSON.stringify(state.changes));
+const saveChanges = () => api.save("sched_changes2", JSON.stringify(state.changes));
 
 // ---------- избранное ----------
 
@@ -333,17 +336,23 @@ function noteChanges(monday, oldRaw, newRaw) {
   const sig = (c) => `${c.kind}|${c.before ? slotKey(c.before.date, c.before) : ""}|${c.after ? slotKey(c.after.date, c.after) : ""}`;
   const prev = state.changes[key]?.list || [];
   const known = new Set(prev.map(sig));
-  const added = found.filter((c) => !known.has(sig(c)));
+  // До понедельника 6:00 неделю ещё заполняют: такие правки не считаем изменениями (не подсвечиваем),
+  // но запоминаем тихо — по ним сдвигаются сроки задач.
+  const quiet = Date.now() < +monday + 6 * 3600e3;
+  const added = found.filter((c) => !known.has(sig(c))).map((c) => (quiet ? { ...c, quiet: true } : c));
+  const loud = added.filter((c) => !c.quiet);
   // Изменение, которое потом откатили, больше не показываем.
   const slots = new Set(fresh.flatMap((d) => d.lessons.map((l) => slotKey(d.date, l))));
   const list = [...prev, ...added].filter((c) => (c.after ? slots.has(slotKey(c.after.date, c.after)) : !slots.has(slotKey(c.before.date, c.before))));
   if (!list.length) { if (state.changes[key]) { delete state.changes[key]; saveChanges(); } return; }
-  state.changes[key] = { list, seen: added.length ? false : state.changes[key]?.seen ?? false };
+  state.changes[key] = { list, seen: loud.length ? false : state.changes[key]?.seen ?? !list.some((c) => !c.quiet) };
   saveChanges();
 }
 
-const weekChanges = (monday) => state.changes[isoDate(monday)]?.list || [];
-const unseenChanges = () => Object.entries(state.changes).filter(([, v]) => !v.seen && v.list.length);
+/** Изменения, которые показываем: только случившиеся после понедельника 6:00 своей недели. */
+const shownChanges = (v) => (v?.list || []).filter((c) => !c.quiet);
+const weekChanges = (monday) => shownChanges(state.changes[isoDate(monday)]);
+const unseenChanges = () => Object.entries(state.changes).filter(([, v]) => !v.seen && shownChanges(v).length);
 
 /** Пару, к которой привязана задача, перенесли — сдвигаем срок. */
 function relinkMine() {
@@ -352,6 +361,18 @@ function relinkMine() {
   const real = new Set(weeks.filter((m) => weekLessons(weekDays(m, null, false)) > 0).map(isoDate));
   const changes = Object.values(state.changes).flatMap((c) => c.list);
   const moved = relinkTasks(state.tasks, weeks.flatMap((m) => weekDays(m, null, false)), changes, real);
+  // Задачи «к следующей практике», когда практики ещё нет в расписании: как только появилась — ставим срок.
+  const plan = planDays();
+  const found = state.tasks.filter((t) => t.lesson?.pending && !t.done && !t.deleted).flatMap((t) => {
+    const o = occurrences(plan, t.lesson.subject, t.lesson.type, new Date(), 1)[0];
+    return o ? [linkTask(t, o, t.lesson.type)] : [];
+  });
+  if (found.length) {
+    found.forEach(touch);
+    saveTasks();
+    const t = found[0];
+    toast(found.length === 1 ? `«${t.title}»: пара появилась в расписании, срок — ${slotLabel(t.lesson.date, t.lesson.start)}` : `У ${found.length} задач появилась пара в расписании`);
+  }
   if (moved.length) {
     saveTasks();
     toast(moved.length === 1 ? `Срок задачи «${moved[0].title}» сдвинут: пару перенесли` : `Сдвинуты сроки ${moved.length} задач: пары перенесли`);
@@ -593,8 +614,78 @@ function meterVerdict(s) {
 }
 
 function currentStats(now = new Date()) {
-  return semesterStats(state.skips, semesterOf(now).key, state.settings.limit);
+  return semesterStats(state.skips, semesterOf(now).key, state.settings.limit, pendingSkips(state.skipMarks, state.skips));
 }
+
+// ---------- свои записи о пропусках (пока деканат не внёс) ----------
+
+async function saveSkipMarks() {
+  await api.save("skip_marks", JSON.stringify(state.skipMarks));
+  scheduleSync();
+}
+function setSkipMark(date, l, patch) {
+  const id = `${date}|${l.start}`;
+  let m = state.skipMarks.find((x) => x.id === id);
+  if (!m) state.skipMarks.push((m = { id, date, start: l.start, subject: l.title || l.subject, type: l.type || "", created: Date.now() }));
+  Object.assign(m, patch);
+  touch(m);
+  saveSkipMarks();
+}
+const sd = { date: null };
+/** Прошедшие дни (2 недели) с моими парами — самые свежие первыми. */
+function skipDays(now = new Date()) {
+  const out = [];
+  for (let k = 0; k <= 14; k++) {
+    const d = addDays(now, -k);
+    const day = weekDays(mondayOf(d), null, false).find((x) => sameDay(x.date, d));
+    const lessons = (day?.lessons || []).filter((l) => k > 0 || lessonStatus(day, l, now) !== "upcoming");
+    if (lessons.length) out.push({ date: isoDate(d), d, lessons });
+  }
+  return out;
+}
+function renderSkipDialog() {
+  const days = skipDays();
+  if (!days.some((x) => x.date === sd.date)) sd.date = days[0]?.date || null;
+  $("#sd-days").html = days.map((x) => `<button type="button" class="pchip ${x.date === sd.date ? "on" : ""}" data-sd-day="${x.date}">${esc(fmtDay(x.d, { weekday: "short", day: "numeric", month: "short" }))}</button>`).join("")
+    || `<span class="muted small">За последние две недели пар не нашлось.</span>`;
+  const day = days.find((x) => x.date === sd.date);
+  $("#sd-lessons").html = (day?.lessons || []).map((l) => {
+    const on = state.skipMarks.some((m) => m.id === `${day.date}|${l.start}` && !m.deleted);
+    return `<button type="button" class="opt sd-lesson ${on ? "on" : ""}" data-sd-start="${esc(l.start)}"><span class="t">${esc(l.start)}</span>
+      <span class="s"><b>${esc(l.title)}</b><small>${esc(typeWords(l.type)[0] || "")}</small></span><span class="tick">✓</span></button>`;
+  }).join("");
+}
+$("#skip-add-btn").addEventListener("click", () => {
+  sd.date = null;
+  // прошлая неделя — если ещё не загружена
+  loadWeek(addDays(currentMonday(), -7), null)?.then(() => { if ($("#skip-dialog").open) renderSkipDialog(); }).catch(() => {});
+  renderSkipDialog();
+  $("#skip-dialog").showModal();
+});
+$("#skip-dialog").addEventListener("click", (e) => {
+  const d = e.target.closest("[data-sd-day]");
+  if (d) { sd.date = d.dataset.sdDay; renderSkipDialog(); return; }
+  const b = e.target.closest("[data-sd-start]");
+  if (!b) return;
+  const day = skipDays().find((x) => x.date === sd.date);
+  const l = day?.lessons.find((x) => x.start === b.dataset.sdStart);
+  if (!l) return;
+  const on = state.skipMarks.some((m) => m.id === `${sd.date}|${l.start}` && !m.deleted);
+  setSkipMark(sd.date, l, on ? { deleted: true } : { deleted: false, excused: false });
+  renderSkipDialog();
+});
+$("#skip-dialog").addEventListener("close", () => renderAll());
+document.addEventListener("click", (e) => {
+  const r = e.target.closest("[data-pend-act]");
+  if (!r) return;
+  const m = state.skipMarks.find((x) => x.id === r.dataset.pendId);
+  if (!m) return;
+  if (r.dataset.pendAct === "excused") m.excused = !m.excused;
+  else { m.deleted = true; toast("Запись удалена"); }
+  touch(m);
+  saveSkipMarks();
+  renderAll();
+});
 
 function renderSync() {
   const el = $("#sync-status");
@@ -623,7 +714,7 @@ function renderToday(now = new Date()) {
   const cb = $("#chg-banner-today");
   cb.classList.toggle("hidden", !unseen.length);
   if (unseen.length) {
-    const list = unseen.flatMap(([, v]) => v.list);
+    const list = unseen.flatMap(([, v]) => shownChanges(v));
     const days = [...new Set(list.map((c) => slotLabel((c.after || c.before).date, "").trim()))].join(", ");
     cb.dataset.week = unseen[0][0];
     cb.html = `<b>Расписание изменилось</b><span>${list.length} ${list.length === 1 ? "изменение" : list.length < 5 ? "изменения" : "изменений"} · ${esc(days)} — посмотреть</span>`;
@@ -682,7 +773,7 @@ function renderToday(now = new Date()) {
       <div class="meter-text">
         <strong>${pluralHours(s.unexcused)} неуважит.</strong>
         ${meterVerdict(s)}
-        <span class="muted small">По заявлению: ${pluralHours(s.excused)}, в лимит не идут</span>
+        <span class="muted small">${s.pendingHours ? `Из них ${pluralHours(s.pendingHours)} ещё нет на портале. ` : ""}По заявлению: ${pluralHours(s.excused)}, в лимит не идут</span>
       </div>
     </div>`;
 
@@ -726,7 +817,7 @@ function renderSchedule(now = new Date()) {
   const sb = $("#chg-banner");
   sb.classList.toggle("hidden", !changes.length);
   if (changes.length) {
-    sb.html = `<b>Расписание изменилось</b><span>${changes.length} ${changes.length === 1 ? "изменение" : changes.length < 5 ? "изменения" : "изменений"} на этой неделе — отмечены точками</span>`;
+    sb.html = `<b>Расписание изменилось</b><span>${changes.length} ${changes.length === 1 ? "изменение" : changes.length < 5 ? "изменения" : "изменений"} на этой неделе</span>`;
     if (state.view === "schedule" && state.changes[isoDate(monday)] && !state.changes[isoDate(monday)].seen) {
       state.changes[isoDate(monday)].seen = true;
       saveChanges();
@@ -1111,7 +1202,9 @@ function taskHTML(t, now) {
   const b = taskBucket(t, now);
   const sub = [KIND[t.kind], t.subject].filter(Boolean).join(" · ");
   let due = esc(relativeDue(t.due, now));
-  if (t.lesson && !t.done) {
+  if (t.lesson?.pending && !t.done) {
+    due = `к ${esc(NOUN(t.lesson.type))}<small class="pre">ждёт расписания</small>`;
+  } else if (t.lesson && !t.done) {
     const when = `к ${NOUN(t.lesson.at || t.lesson.type)}, ${slotLabel(t.lesson.date, t.lesson.start)}`;
     due = `${esc(when)}<small class="${isRealDate(t.lesson.date) ? "" : "pre"}">${isRealDate(t.lesson.date) ? esc(relativeDue(t.due, now)) : "предварительно"}</small>`;
   }
@@ -1217,7 +1310,40 @@ const toLocalInput = (iso) => {
 };
 
 const KINDS = [["lab", "Лаба"], ["hw", "Домашка"], ["course", "Курсовой"], ["test", "Контрольная"], ["exam", "Экзамен"], ["other", "Другое"]];
-const WHEN = ["Следующей паре", "Через одну", "Через две"];
+/**
+ * Какие виды пар у предмета бывали: в расписании (загруженные недели и прогноз) и в журнале за семестр.
+ * → Set из «лек» / «практ» / «лаб» / «сем».
+ */
+function subjectKinds(subject, planTypes) {
+  const kinds = new Set([...planTypes].map(kindOf));
+  const kdiscs = new Set();
+  for (const key of state.weekRaw.keys()) {
+    for (const d of weekDays(parseIsoDate(key), null, false)) for (const l of d.lessons) {
+      if (l.title !== subject) continue;
+      kinds.add(kindOf(l.type));
+      const pf = state.perfIndex.get(`${isoDate(d.date)}|${l.start}`);
+      if (pf) kdiscs.add(pf.kdisc);
+    }
+  }
+  const name = subject.toLowerCase();
+  for (const [kdisc, p] of state.perf) {
+    if (!kdiscs.has(kdisc) && !p.items.some((x) => x.subject.toLowerCase() === name)) continue;
+    for (const x of p.items) kinds.add(kindOf(x.kind));
+  }
+  return kinds;
+}
+const KIND_TYPE = { "лек": "лек.", "практ": "практ. зан.", "лаб": "лаб.", "сем": "сем." };
+
+/** Вид пары словами: название и варианты «к какой сдавать». */
+const typeWords = (type) => {
+  const t = String(type || "").toLowerCase();
+  if (t.startsWith("лек")) return ["Лекция", "Следующей лекции", "Через одну лекцию", "Через две лекции"];
+  if (t.startsWith("лаб")) return ["Лаба", "Следующей лабе", "Через одну лабу", "Через две лабы"];
+  if (t.startsWith("практ")) return ["Практика", "Следующей практике", "Через одну практику", "Через две практики"];
+  if (t.startsWith("сем")) return ["Семинар", "Следующему семинару", "Через один семинар", "Через два семинара"];
+  return [typeShort(type), "Следующей паре", "Через одну пару", "Через две пары"];
+};
+const whenLabels = (type) => typeWords(type).slice(1);
 const dstate = { subject: "", custom: false, type: null, when: "none", kind: "lab", kindTouched: false, showAll: false, occ: [], keep: null };
 
 function openTask(id) {
@@ -1235,8 +1361,10 @@ function openTask(id) {
     kind: t?.kind || "lab",
     kindTouched: !!t,
     showAll: false,
-    keep: t?.lesson ? { ...t.lesson } : null,
-    when: t?.lesson ? "keep" : t?.due ? "custom" : "first",
+    keep: t?.lesson && !t.lesson.pending ? { ...t.lesson } : null,
+    typeAuto: true,
+    moreKinds: false,
+    when: t?.lesson?.pending ? "wait" : t?.lesson ? "keep" : t?.due ? "custom" : "first",
   });
   dstate.custom = !!dstate.subject && !subjects.includes(dstate.subject);
   $("#t-subject").value = dstate.custom ? dstate.subject : "";
@@ -1258,22 +1386,33 @@ function renderTaskForm() {
   $("#t-subject").classList.toggle("hidden", !dstate.custom);
 
   // Виды пар — только те, что у предмета есть.
-  const types = known && !dstate.custom ? [...known.types] : [];
-  if (dstate.type && !types.includes(dstate.type)) dstate.type = null;
-  if (!dstate.type && types.length === 1) dstate.type = types[0];
-  $("#t-types-wrap").classList.toggle("hidden", types.length < 2);
-  $("#t-types").html = types.map((ty) => `<button type="button" class="pchip ${ty === dstate.type ? "on" : ""}" data-type="${esc(ty)}">${esc(typeShort(ty))}</button>`).join("");
+  // Виды пар: те, что у предмета бывали за семестр. Остальные — под «Другая…» (например, практику ещё не ставили).
+  const own = known && !dstate.custom ? subjectKinds(dstate.subject, known.types) : new Set();
+  const rest = known && !dstate.custom ? ["лек", "практ", "лаб"].filter((k) => !own.has(k)) : [];
+  const shownKinds = [...own].filter((k) => KIND_TYPE[k]).concat(dstate.moreKinds ? rest : []);
+  if (dstate.type && !shownKinds.includes(kindOf(dstate.type))) {
+    if (rest.includes(kindOf(dstate.type))) dstate.moreKinds = true, shownKinds.push(...rest.filter((k) => !shownKinds.includes(k)));
+    else dstate.type = null;
+  }
+  if (!dstate.type && known && known.types.size === 1 && own.size === 1 && dstate.typeAuto !== false) dstate.type = [...known.types][0];
+  $("#t-types-wrap").classList.toggle("hidden", !known || dstate.custom);
+  $("#t-types").html = `<button type="button" class="pchip ${!dstate.type ? "on" : ""}" data-type="">Любая</button>` +
+    shownKinds.map((k) => `<button type="button" class="pchip ${dstate.type && kindOf(dstate.type) === k ? "on" : ""}" data-type="${esc(KIND_TYPE[k])}">${esc(typeWords(KIND_TYPE[k])[0])}</button>`).join("") +
+    (rest.length && !dstate.moreKinds ? `<button type="button" class="pchip more" data-kinds-more title="Если такой пары у предмета ещё не было">Другая…</button>` : "");
 
   // К какой паре сдавать.
   dstate.occ = known && !dstate.custom ? occurrences(plan, dstate.subject, dstate.type, now, 3) : [];
   const keepIdx = dstate.keep ? dstate.occ.findIndex((o) => o.date === dstate.keep.date && o.start === dstate.keep.start && o.title === dstate.keep.subject) : -1;
   if (dstate.when === "keep" && keepIdx >= 0) dstate.when = keepIdx;
-  if (dstate.when === "first") dstate.when = dstate.occ.length ? 0 : "none";
+  const canWait = known && !dstate.custom && dstate.type && !dstate.occ.length;
+  if (dstate.when === "first") dstate.when = dstate.occ.length ? 0 : canWait ? "wait" : "none";
+  if (dstate.when === "wait" && !canWait) dstate.when = dstate.occ.length ? 0 : "none";
   if (typeof dstate.when === "number" && dstate.when >= dstate.occ.length) dstate.when = dstate.occ.length ? 0 : "none";
   if (dstate.when === "keep" && (!dstate.keep || dstate.keep.subject !== dstate.subject)) dstate.when = dstate.occ.length ? 0 : "none";
   const optHTML = (key, title, line, note, pre) => `<button type="button" class="opt ${dstate.when === key ? "on" : ""}" data-when="${key}"><b>${title}</b>${line ? `<span>${line}</span>` : ""}${note ? `<em class="${pre ? "pre" : ""}">${note}</em>` : ""}</button>`;
   const fmtO = (o) => `${esc(fmtDay(parseIsoDate(o.date), { weekday: "short", day: "numeric", month: "short" }))} · ${esc(o.start)}${o.room ? ` · ауд. ${esc(o.room)}` : ""}`;
-  $("#t-when").html = dstate.occ.map((o, i) => optHTML(i, WHEN[i], fmtO(o), o.forecast ? "предварительно" : esc(relativeDue(lessonDue(o), now)), o.forecast)).join("") +
+  $("#t-when").html = dstate.occ.map((o, i) => optHTML(i, whenLabels(dstate.type)[i], fmtO(o), o.forecast ? "предварительно" : esc(relativeDue(lessonDue(o), now)), o.forecast)).join("") +
+    (canWait ? optHTML("wait", whenLabels(dstate.type)[0], "пока нет в расписании", "срок появится сам") : "") +
     (dstate.when === "keep" ? optHTML("keep", "Как было", `${esc(slotLabel(dstate.keep.date, dstate.keep.start))}`, "") : "") +
     optHTML("custom", "Своя дата…", "", "") + optHTML("none", "Без срока", "", "");
   $("#t-due").classList.toggle("hidden", dstate.when !== "custom");
@@ -1288,10 +1427,11 @@ function renderTaskForm() {
 
 $("#task-dialog").addEventListener("click", (e) => {
   const q = (sel) => e.target.closest(sel);
-  if (q("[data-subj]")) { Object.assign(dstate, { subject: q("[data-subj]").dataset.subj, custom: false, type: null, when: "first" }); }
+  if (q("[data-subj]")) { Object.assign(dstate, { subject: q("[data-subj]").dataset.subj, custom: false, type: null, typeAuto: true, moreKinds: false, when: "first" }); }
   else if (q("[data-subj-more]")) dstate.showAll = true;
   else if (q("[data-subj-custom]")) { Object.assign(dstate, { custom: true, subject: $("#t-subject").value.trim(), type: null, when: dstate.when === "none" ? "none" : "custom" }); setTimeout(() => $("#t-subject").focus(), 0); }
-  else if (q("[data-type]")) { const ty = q("[data-type]").dataset.type; dstate.type = dstate.type === ty ? null : ty; dstate.when = "first"; }
+  else if (q("[data-kinds-more]")) dstate.moreKinds = true;
+  else if (q("[data-type]")) { dstate.type = q("[data-type]").dataset.type || null; dstate.typeAuto = false; dstate.when = "first"; }
   else if (q("[data-when]")) { const w = q("[data-when]").dataset.when; dstate.when = /^\d$/.test(w) ? Number(w) : w; }
   else if (q("[data-kind]")) { dstate.kind = q("[data-kind]").dataset.kind; dstate.kindTouched = true; }
   else return;
@@ -1315,6 +1455,7 @@ $("#task-form").addEventListener("submit", (e) => {
   const target = t ? Object.assign(t, data) : { id: crypto.randomUUID(), ...data, done: false, created: Date.now() };
   if (typeof dstate.when === "number") linkTask(target, dstate.occ[dstate.when], dstate.type);
   else if (dstate.when === "keep") { /* срок и пара прежние */ delete target.moved; }
+  else if (dstate.when === "wait") { target.lesson = { subject: dstate.subject, type: dstate.type, pending: true }; target.due = null; delete target.moved; }
   else {
     delete target.lesson; delete target.moved;
     target.due = dstate.when === "custom" && $("#t-due").value ? new Date($("#t-due").value).toISOString() : null;
@@ -1345,6 +1486,7 @@ function renderSkips(now = new Date()) {
           <span class="muted small">${esc(sem.label)}</span>
           <strong style="font-size:20px">${pluralHours(s.unexcused)} из ${s.limit} неуважительных</strong>
           ${meterVerdict(s)}
+          ${s.pendingHours ? `<span class="muted small">Из них ${pluralHours(s.pendingHours)} ещё нет на портале</span>` : ""}
         </div>
       </div>
       <div class="stats">
@@ -1354,8 +1496,20 @@ function renderSkips(now = new Date()) {
       </div>
     </div>`;
 
+  const pend = s.pending;
+  const pendHTML = pend.length ? `<div class="sem-title"><span>Ещё нет на портале</span><span>${pend.length} ${pend.length === 1 ? "пара" : pend.length < 5 ? "пары" : "пар"} · уже в счётчике</span></div>
+    <div class="skip-list">${pend.map((x) => `
+      <div class="skip-row pend-row">
+        <span>${fmtDay(parseIsoDate(x.date), { day: "numeric", month: "short", weekday: "short" })} · ${esc(x.start)}</span>
+        <span class="pend-subj">${esc(x.subject)}</span>
+        <span class="pend-acts">
+          <button class="pchip ${x.excused ? "on" : ""}" data-pend-act="excused" data-pend-id="${esc(x.id)}">уваж.</button>
+          <button class="icon-btn sm" data-pend-act="remove" data-pend-id="${esc(x.id)}" aria-label="Удалить">×</button>
+        </span>
+      </div>`).join("")}</div>
+    <p class="muted small pend-hint">Исчезнут сами, когда деканат внесёт пропуск на портал.</p>` : "";
   const groups = groupBySemester(state.skips);
-  $("#skips-list").html = groups.length
+  $("#skips-list").html = pendHTML + (groups.length
     ? groups.map((g) => {
         const gs = semesterStats(state.skips, g.key, state.settings.limit);
         return `<div class="sem-title"><span>${esc(g.label)}</span><span>${gs.unexcused} неуваж. · ${gs.excused} уваж.</span></div>
@@ -1366,7 +1520,7 @@ function renderSkips(now = new Date()) {
               <span class="skip-reason ${x.unexcused ? "bad" : "good"}">${esc(x.reason || "без причины")}</span>
             </div>`).join("")}</div>`;
       }).join("")
-    : `<div class="empty">Пропусков нет — или данные ещё не загрузились.</div>`;
+    : pend.length ? "" : `<div class="empty">Пропусков нет — или данные ещё не загрузились.</div>`);
 
   $("#limit-input").value = state.settings.limit;
   $("#account-line").textContent = state.username ? `Вход выполнен как ${state.username}` : "";
@@ -1380,9 +1534,9 @@ $("#logout-btn").addEventListener("click", async () => {
   await api.logout();
   state.skips = []; state.days = []; state.lastSync = null; state.username = null;
   state.cabinetRaw = null; state.weekRaw.clear(); state.weekFetched.clear(); state.weekStart = null;
-  state.otherRaw.clear(); state.viewing = null; state.favorites = []; state.changes = {};
+  state.otherRaw.clear(); state.viewing = null; state.favorites = []; state.changes = {}; state.skipMarks = [];
   state.perf.clear(); state.perfIndex.clear();
-  api.save("favorites", "[]"); api.save("sched_changes", "{}");
+  api.save("favorites", "[]"); api.save("sched_changes2", "{}"); api.save("skip_marks", "[]");
   api.save("last_sync", "");
   showLogin();
 });
@@ -1412,6 +1566,7 @@ async function runSync(silent) {
     const res = await api.syncNow(sync.cfg.addr || null, sync.cfg.pin);
     try { state.tasks = JSON.parse((await api.load("tasks")) || "[]"); } catch {}
     try { state.favorites = JSON.parse((await api.load("favorites")) || "[]"); } catch {}
+    try { state.skipMarks = JSON.parse((await api.load("skip_marks")) || "[]"); } catch {}
     Object.assign(sync.cfg, { addr: res.address, last: Date.now() });
     api.save("sync", JSON.stringify(sync.cfg));
     $("#sync-msg").textContent = `Синхронизировано: ${res.count} задач. Последний раз — ${new Date().toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })}.`;
@@ -1442,6 +1597,7 @@ async function initSync() {
     api.onTasksUpdated(async () => {
       try { state.tasks = JSON.parse((await api.load("tasks")) || "[]"); } catch {}
       try { state.favorites = JSON.parse((await api.load("favorites")) || "[]"); } catch {}
+      try { state.skipMarks = JSON.parse((await api.load("skip_marks")) || "[]"); } catch {}
       renderAll();
       toast("Обновлено с телефона");
     });
@@ -1752,13 +1908,12 @@ const THEMES = [
   ["light-sand", "Песочная", "#f8f4ec", "#fffdf8", "#b5701c"],
 ];
 const CARD_STYLES = [
-  ["soft", "Обычные"], ["glass", "Стекло"], ["neon", "Неон"], ["aura", "Аура"], ["holo", "Голограмма"], ["soft3d", "Объём"],
-  ["outline", "Контур"], ["tint", "Цветные"], ["brutal", "Брутал"], ["sticker", "Стикеры"], ["paper", "Тетрадь"],
-  ["blueprint", "Чертёж"], ["corners", "Уголки"], ["sharp", "Строгие"],
+  ["soft", "Обычные"], ["frost", "Матовое стекло"], ["gradient", "Градиент"], ["pastel", "Пастель"], ["neon", "Неон"], ["tint", "Цветные"],
+  ["pixel", "Пиксель"], ["brutal", "Брутал"], ["sticker", "Стикеры"], ["paper", "Тетрадь"], ["blueprint", "Чертёж"], ["corners", "Уголки"], ["sharp", "Строгие"],
 ];
 const APP_ICONS = [
-  ["lilac", "Сирень"], ["night", "Ночь"], ["minimal", "Минимал"], ["gradient", "Градиент"], ["mint", "Мята"], ["sunset", "Закат"],
-  ["ocean", "Океан"], ["calendar", "Календарь"], ["notebook", "Тетрадь"], ["pixel", "Пиксель"], ["mono", "Монохром"],
+  ["lilac", "Сирень"], ["night", "Ночь"], ["minimal", "Минимал"], ["mint", "Мята"], ["sunset", "Закат"], ["letter", "Буква U"], ["cap", "Выпускник"],
+  ["book", "Книга"], ["owl", "Сова"], ["planet", "Планета"], ["rocket", "Ракета"], ["bulb", "Идея"], ["pencil", "Карандаш"], ["coffee", "Кофе"],
 ];
 /** Значок в шапке приложения — тот же, что выбран иконкой. */
 const applyBrand = () => document.documentElement.style.setProperty("--brand-icon", `url("icons/${state.settings.icon || "lilac"}.svg")`);
@@ -1769,6 +1924,8 @@ function applyTheme() {
   if (id === "system") id = systemDark && !systemDark.matches ? "light" : "lilac";
   if (id === "lilac") delete document.documentElement.dataset.theme;
   else document.documentElement.dataset.theme = id;
+  // Стили, убранные в 0.3.1 (стекло, аура, голограмма, объём, контур), → обычные.
+  if (state.settings.cards && !CARD_STYLES.some((c) => c[0] === state.settings.cards)) state.settings.cards = "soft";
   const cards = state.settings.cards || "soft";
   if (cards === "soft") delete document.documentElement.dataset.cards;
   else document.documentElement.dataset.cards = cards;
@@ -1810,6 +1967,11 @@ $("#icon-grid").addEventListener("click", async (e) => {
   if (!b || b.dataset.iconId === (state.settings.icon || "lilac")) return;
   const prev = state.settings.icon || "lilac";
   state.settings.icon = b.dataset.iconId;
+  // Иконки, убранные после 0.3.0, — возвращаем «Сирень» (на Android это же выключит старый ярлык).
+  if (state.settings.icon && !APP_ICONS.some((i) => i[0] === state.settings.icon)) {
+    state.settings.icon = "lilac"; saveSettings();
+    if (/Android/i.test(navigator.userAgent)) api.setAppIcon?.("lilac").catch(() => {});
+  }
   applyBrand();
   renderIcons();
   try {

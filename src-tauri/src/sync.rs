@@ -27,7 +27,7 @@ const TOMBSTONE_TTL_MS: f64 = 60.0 * 24.0 * 3600.0 * 1000.0;
 pub static TASKS_LOCK: Mutex<()> = Mutex::new(());
 
 /// Что синхронизируется между устройствами. Всё по одним правилам: id + updated + «надгробия».
-pub const COLLECTIONS: &[&str] = &["tasks", "favorites"];
+pub const COLLECTIONS: &[&str] = &["tasks", "favorites", "skip_marks"];
 
 fn coll_path(dir: &Path, name: &str) -> PathBuf {
     dir.join(format!("data_{name}.json"))

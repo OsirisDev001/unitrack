@@ -2,7 +2,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  normalizeSkips, semesterStats, semesterOf, normalizeSchedule, nextLesson, taskBucket, pluralPairs,
+  normalizeSkips, semesterStats, pendingSkips, semesterOf, normalizeSchedule, nextLesson, taskBucket, pluralPairs,
 } from "../src/logic.js";
 
 const P = "прогул";
@@ -113,4 +113,24 @@ test("недели: понедельник, 7 дней, прогноз и пол
   assert.equal(m.isoDate(next[1].date), "2026-11-03");
   assert.ok(next[1].forecast && next[1].lessons.every((l) => l.forecast));
   assert.ok(!week[1].lessons[0].forecast); // исходная неделя не испорчена
+});
+
+test("свои записи о пропусках, которых ещё нет на портале", () => {
+  const marks = [
+    { id: "a", date: "2026-11-09", start: "15:05", subject: "Экономика" },
+    { id: "b", date: "2026-11-09", start: "13:30", subject: "Философия" },
+    { id: "c", date: "2026-11-10", start: "9:00", subject: "Сети", excused: true },
+    { id: "d", date: "2026-11-11", start: "11:40", subject: "Право", deleted: true },
+  ];
+  // 9 нояб: на портале 2 часа → первая пара дня (13:30) внесена, 15:05 ещё ждёт.
+  const portal = normalizeSkips([{ NDATA: "09.11.2026", KOLVO: "2", NPRICH: "прогул" }]);
+  const p = pendingSkips(marks, portal);
+  assert.deepEqual(p.map((x) => x.id), ["a", "c"]);
+  const s = semesterStats(portal, "2026-2", 36, p);
+  assert.equal(s.unexcused, 4); // 2 на портале + 2 ещё нет
+  assert.equal(s.excused, 2);
+  assert.equal(s.pendingHours, 2);
+  // Деканат внёс всё — ничего не висит.
+  const full = normalizeSkips([{ NDATA: "09.11.2026", KOLVO: "4", NPRICH: "" }, { NDATA: "10.11.2026", KOLVO: "2", NPRICH: "заявление" }]);
+  assert.equal(pendingSkips(marks, full).length, 0);
 });

@@ -58,8 +58,28 @@ export function normalizeSkips(raw) {
     .sort((a, b) => b.date - a.date);
 }
 
-/** Сводка по семестру: сколько неуважительных часов идёт в лимит. */
-export function semesterStats(skips, semesterKey, limit = DEFAULT_LIMIT) {
+/**
+ * Свои записи о пропусках, которых ещё нет на портале.
+ * Портал знает только часы за день, поэтому сверяем по дням: если за день на портале уже N часов,
+ * первые N/2 записанных пар этого дня считаем внесёнными.
+ * marks: [{ id, date: "YYYY-MM-DD", start, subject, type, excused?, deleted? }] → те, что ещё ждут, по порядку
+ */
+export function pendingSkips(marks, skips) {
+  const portal = new Map();
+  for (const s of skips) {
+    const k = isoDate(s.date);
+    portal.set(k, (portal.get(k) || 0) + s.hours);
+  }
+  const at = (m) => m.date + m.start.padStart(5, "0");
+  const byDay = new Map();
+  for (const m of [...marks].filter((x) => !x.deleted).sort((a, b) => at(a).localeCompare(at(b)))) {
+    byDay.set(m.date, [...(byDay.get(m.date) || []), m]);
+  }
+  return [...byDay].flatMap(([date, list]) => list.slice(Math.floor((portal.get(date) || 0) / 2)));
+}
+
+/** Сводка по семестру: сколько неуважительных часов идёт в лимит (вместе с ещё не внесёнными). */
+export function semesterStats(skips, semesterKey, limit = DEFAULT_LIMIT, pending = []) {
   const list = skips.filter((s) => s.semester.key === semesterKey);
   let unexcused = 0;
   let excused = 0;
@@ -73,10 +93,14 @@ export function semesterStats(skips, semesterKey, limit = DEFAULT_LIMIT) {
       excused += s.hours;
     }
   }
+  const pend = pending.filter((p) => semesterOf(new Date(`${p.date}T12:00`)).key === semesterKey);
+  const pendingHours = pend.filter((p) => !p.excused).length * 2;
+  unexcused += pendingHours;
+  excused += pend.filter((p) => p.excused).length * 2;
   const left = Math.max(0, limit - unexcused);
   const ratio = limit > 0 ? unexcused / limit : 0;
   const level = ratio >= 1 ? "over" : ratio >= 0.75 ? "danger" : ratio >= 0.5 ? "warn" : "ok";
-  return { list, unexcused, excused, worked, limit, left, pairsLeft: Math.floor(left / 2), ratio, level };
+  return { list, unexcused, excused, worked, limit, left, pairsLeft: Math.floor(left / 2), ratio, level, pending: pend, pendingHours };
 }
 
 /** Группирует пропуски по семестрам, новые сверху. */

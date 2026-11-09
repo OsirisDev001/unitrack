@@ -28,7 +28,9 @@ class IconArgs {
     lateinit var name: String
 }
 
-private val ICONS = listOf("lilac", "night", "minimal", "gradient", "mint", "sunset", "ocean", "calendar", "notebook", "pixel", "mono")
+private val ICONS = listOf("lilac", "night", "minimal", "mint", "sunset", "letter", "cap", "book", "owl", "planet", "rocket", "bulb", "pencil", "coffee")
+// Иконки из 0.3.0, которых больше нет: их ярлыки остались в манифесте, чтобы выключить их при смене.
+private val OLD_ICONS = listOf("gradient", "ocean", "calendar", "notebook", "pixel", "mono")
 
 @TauriPlugin
 class ApkInstallerPlugin(private val activity: Activity) : Plugin(activity) {
@@ -80,7 +82,7 @@ class ApkInstallerPlugin(private val activity: Activity) : Plugin(activity) {
             val alias = { n: String -> ComponentName(activity.packageName, "by.tomashevich.unitrack.Icon" + n.replaceFirstChar { it.uppercase() }) }
             // Сначала включаем новую, потом выключаем остальные — чтобы ярлык не пропадал совсем.
             pm.setComponentEnabledSetting(alias(name), PackageManager.COMPONENT_ENABLED_STATE_ENABLED, PackageManager.DONT_KILL_APP)
-            for (n in ICONS) if (n != name) {
+            for (n in ICONS + OLD_ICONS) if (n != name) {
                 pm.setComponentEnabledSetting(alias(n), PackageManager.COMPONENT_ENABLED_STATE_DISABLED, PackageManager.DONT_KILL_APP)
             }
             invoke.resolve()
