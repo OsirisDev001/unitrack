@@ -109,6 +109,30 @@ export function diffWeeks(oldDays, newDays, now = new Date()) {
 /** Ключ пары в расписании, чтобы подсветить изменение на месте. */
 export const slotKey = (date, l) => `${typeof date === "string" ? date : isoDate(date)}|${l.start}|${l.title}`;
 
+/** С этого момента неделя считается выложенной: понедельник, 6:00. */
+export const weekSettledAt = (monday) => +monday + 6 * 3600e3;
+
+/**
+ * Копим изменения недели: сравниваем прошлый снимок расписания с новым.
+ * Показываем только то, что поменялось после понедельника 6:00, — то есть когда и прошлый снимок
+ * (baseAt — время, когда его скачали) сделан уже после этой отметки. Иначе неделю ещё заполняли:
+ * такие правки помечаем quiet — не подсвечиваем, но сроки задач по ним двигаем.
+ * Если время прошлого снимка неизвестно — тоже quiet: лучше промолчать, чем закрасить всю неделю.
+ * → { list, loud } — новый список изменений недели и сколько в нём новых заметных
+ */
+export function accumulateChanges({ monday, oldDays, newDays, prev = [], baseAt = null, now = new Date() }) {
+  const quiet = !(baseAt != null && baseAt >= weekSettledAt(monday));
+  const sig = (c) => `${c.kind}|${c.before ? slotKey(c.before.date, c.before) : ""}|${c.after ? slotKey(c.after.date, c.after) : ""}`;
+  const known = new Set(prev.map(sig));
+  const added = (oldDays ? diffWeeks(oldDays, newDays, now) : [])
+    .filter((c) => !known.has(sig(c)))
+    .map((c) => (quiet ? { ...c, quiet: true } : c));
+  // Изменение, которое потом откатили, больше не показываем.
+  const slots = new Set(newDays.flatMap((d) => d.lessons.map((l) => slotKey(d.date, l))));
+  const list = [...prev, ...added].filter((c) => (c.after ? slots.has(slotKey(c.after.date, c.after)) : !slots.has(slotKey(c.before.date, c.before))));
+  return { list, loud: added.filter((c) => !c.quiet).length };
+}
+
 /** Текст изменения для подсветки и плашки. */
 export function changeText(c) {
   if (c.kind === "room") return `Аудитория: ${c.before.room || "—"} → ${c.after.room || "—"}`;
@@ -193,7 +217,8 @@ export function subjectsWithTypes(days, now = new Date()) {
 /** Вид пары без хвостов: «практ. зан.» и «практ.зан» → «практ». */
 export const kindOf = (type) => {
   const t = String(type || "").toLowerCase();
-  return t.startsWith("лек") ? "лек" : t.startsWith("практ") ? "практ" : t.startsWith("лаб") ? "лаб" : t.startsWith("сем") ? "сем" : t.trim();
+  return t.startsWith("лек") ? "лек" : t.startsWith("практ") ? "практ" : t.startsWith("лаб") ? "лаб" : t.startsWith("сем") ? "сем"
+    : t.startsWith("зач") ? "зач" : t.startsWith("экз") ? "экз" : t.startsWith("конс") ? "конс" : t.trim();
 };
 const sameKind = (a, b) => kindOf(a) === kindOf(b);
 
@@ -251,25 +276,52 @@ export function predictLessonNumbers(lessons, journal) {
   const index = new Map();
   for (const [kdisc, items] of journal) for (const it of items) index.set(`${it.date}|${it.start}`, { kdisc, item: it });
   const sorted = [...lessons].sort((a, b) => stampOf(a.date, a.l.start).localeCompare(stampOf(b.date, b.l.start)));
-  const link = new Map();
+  // Пара расписания ↔ журнал предмета: по совпавшей дате и времени. Сначала точно (предмет + вид пары),
+  // потом по одному предмету — для вида пары, которого в журнале с датой ещё не было (первая практика).
+  const link = new Map(), bySubject = new Map();
   for (const { l, date } of sorted) {
     const hit = index.get(`${date}|${l.start}`);
-    if (hit) link.set(`${l.title}|${l.type}`, { kdisc: hit.kdisc, label: hit.item.label });
+    if (!hit) continue;
+    link.set(`${l.title}|${l.type}`, { kdisc: hit.kdisc, label: hit.item.label });
+    bySubject.set(l.title, hit.kdisc);
   }
-  const last = new Map();
-  for (const [kdisc, items] of journal) for (const it of items) last.set(`${kdisc}|${it.label}`, it);
+  const last = new Map(), lastAny = new Map(), planned = new Map();
+  for (const [kdisc, items] of journal) {
+    for (const it of items) {
+      last.set(`${kdisc}|${it.label}`, it);
+      lastAny.set(kdisc, it);
+    }
+    for (const it of items.planned || []) {
+      const k = `${kdisc}|${it.label}`;
+      planned.set(k, [...(planned.get(k) || []), it]);
+    }
+  }
   const count = new Map();
   const out = new Map();
   for (const { l, date } of sorted) {
     const key = `${date}|${l.start}`;
     if (index.has(key)) continue;
-    const m = link.get(`${l.title}|${l.type}`);
-    const lastIt = m && last.get(`${m.kdisc}|${m.label}`);
+    let m = link.get(`${l.title}|${l.type}`);
+    let lastIt = m && last.get(`${m.kdisc}|${m.label}`);
+    if (!m && bySubject.has(l.title)) {
+      // Вида пары в журнале ещё нет: досчитываем с нуля, но только после последнего заполненного занятия предмета.
+      const kdisc = bySubject.get(l.title);
+      const label = ({ "лек": "Лекция", "практ": "Практика", "лаб": "Лаба", "сем": "Семинар" })[kindOf(l.type)] || String(l.type || "Пара").trim(); // как kindLabel в study.js
+      if (last.has(`${kdisc}|${label}`)) continue;
+      m = { kdisc, label };
+      const any = lastAny.get(kdisc);
+      lastIt = { n: 0, date: any?.date || "", start: any?.start || "" };
+    }
     if (!lastIt || stampOf(date, l.start) <= stampOf(lastIt.date, lastIt.start)) continue;
     const ck = `${m.kdisc}|${m.label}`;
     const n = (count.get(ck) ?? lastIt.n) + 1;
     count.set(ck, n);
-    out.set(key, { kdisc: m.kdisc, item: { label: m.label, n, topic: "", mark: "", absent: "", seq: "", date, start: l.start, next: true } });
+    // Тема — из расписанных без даты занятий этого вида по порядку: первая досчитанная пара — первая такая тема.
+    const plan = planned.get(ck)?.[n - lastIt.n - 1];
+    out.set(key, { kdisc: m.kdisc, item: { label: m.label, n, topic: plan?.topic || "", mark: "", absent: "", seq: plan?.seq || "", date, start: l.start, next: true, topicPlanned: !!plan } });
   }
   return out;
 }
+
+/** Зачёт, экзамен или консультация перед экзаменом. */
+export const isExam = (type) => ["зач", "экз", "конс"].includes(kindOf(type));

@@ -60,9 +60,12 @@ export function normalizeSkips(raw) {
 
 /**
  * Свои записи о пропусках, которых ещё нет на портале.
- * Портал знает только часы за день, поэтому сверяем по дням: если за день на портале уже N часов,
- * первые N/2 записанных пар этого дня считаем внесёнными.
- * marks: [{ id, date: "YYYY-MM-DD", start, subject, type, excused?, deleted? }] → те, что ещё ждут, по порядку
+ * Портал знает только часы за день, а не пары. Поэтому, когда за день записи на портале появляются часы,
+ * запись не исчезает молча: помечаем её ask («на портале N ч за этот день — это она?») и перестаём считать,
+ * чтобы не задвоить. Ответ «нет, это другая пара» запоминается в other (сколько часов было на портале) —
+ * тогда запись снова считается, а спросим ещё раз, только если часов на портале прибавится.
+ * marks: [{ id, date: "YYYY-MM-DD", start, subject, excused?, other?, deleted? }]
+ * → те же записи по порядку с полями ask и portal (часы на портале за день)
  */
 export function pendingSkips(marks, skips) {
   const portal = new Map();
@@ -71,11 +74,14 @@ export function pendingSkips(marks, skips) {
     portal.set(k, (portal.get(k) || 0) + s.hours);
   }
   const at = (m) => m.date + m.start.padStart(5, "0");
-  const byDay = new Map();
-  for (const m of [...marks].filter((x) => !x.deleted).sort((a, b) => at(a).localeCompare(at(b)))) {
-    byDay.set(m.date, [...(byDay.get(m.date) || []), m]);
-  }
-  return [...byDay].flatMap(([date, list]) => list.slice(Math.floor((portal.get(date) || 0) / 2)));
+  const pool = new Map();
+  return [...marks].filter((m) => !m.deleted).sort((a, b) => at(a).localeCompare(at(b))).map((m) => {
+    const hours = portal.get(m.date) || 0;
+    const left = pool.has(m.date) ? pool.get(m.date) : Math.floor(hours / 2);
+    const ask = left > 0 && (m.other || 0) < hours;
+    pool.set(m.date, ask ? left - 1 : left);
+    return { ...m, ask, portal: hours };
+  });
 }
 
 /** Сводка по семестру: сколько неуважительных часов идёт в лимит (вместе с ещё не внесёнными). */
@@ -94,13 +100,46 @@ export function semesterStats(skips, semesterKey, limit = DEFAULT_LIMIT, pending
     }
   }
   const pend = pending.filter((p) => semesterOf(new Date(`${p.date}T12:00`)).key === semesterKey);
-  const pendingHours = pend.filter((p) => !p.excused).length * 2;
+  const counted = pend.filter((p) => !p.ask); // под вопросом — не считаем, чтобы не задвоить с порталом
+  const pendingHours = counted.filter((p) => !p.excused).length * 2;
   unexcused += pendingHours;
-  excused += pend.filter((p) => p.excused).length * 2;
+  excused += counted.filter((p) => p.excused).length * 2;
   const left = Math.max(0, limit - unexcused);
   const ratio = limit > 0 ? unexcused / limit : 0;
   const level = ratio >= 1 ? "over" : ratio >= 0.75 ? "danger" : ratio >= 0.5 ? "warn" : "ok";
   return { list, unexcused, excused, worked, limit, left, pairsLeft: Math.floor(left / 2), ratio, level, pending: pend, pendingHours };
+}
+
+const MONTH_IN = ["январе", "феврале", "марте", "апреле", "мае", "июне", "июле", "августе", "сентябре", "октябре", "ноябре", "декабре"];
+
+/**
+ * Сводка посещаемости для экрана: часы без уважительной причины за семестр и за текущий месяц
+ * и ориентиры, которые студент задал сам (официальных цифр в кабинете нет; у кого-то это 36 ч за семестр,
+ * у кого-то 20 ч в месяц). Ориентир 0 или пустой — не задан.
+ * main — тот ориентир, к которому ближе всего (по доле), или null.
+ */
+export function attendanceSummary({ skips, pending = [], now = new Date(), semesterLimit = 0, monthLimit = 0 }) {
+  const sem = semesterStats(skips, semesterOf(now).key, semesterLimit || 0, pending);
+  const inMonth = (d) => d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
+  let monthUnexcused = 0, monthExcused = 0;
+  for (const s of skips) {
+    if (!inMonth(s.date)) continue;
+    if (s.unexcused) monthUnexcused += Math.max(0, s.hours - s.worked);
+    else monthExcused += s.hours;
+  }
+  for (const p of pending) {
+    if (p.ask || !inMonth(new Date(`${p.date}T12:00`))) continue;
+    if (p.excused) monthExcused += 2; else monthUnexcused += 2;
+  }
+  const gauge = (kind, used, limit) => (limit > 0 ? { kind, used, limit, ratio: used / limit } : null);
+  const gauges = [gauge("month", monthUnexcused, monthLimit), gauge("semester", sem.unexcused, semesterLimit)].filter(Boolean);
+  const main = gauges.sort((a, b) => b.ratio - a.ratio)[0] || null;
+  const level = !main ? "ok" : main.ratio >= 1 ? "over" : main.ratio >= 0.75 ? "near" : "ok";
+  return {
+    semester: sem, monthName: MONTH_IN[now.getMonth()],
+    month: { unexcused: monthUnexcused, excused: monthExcused, limit: monthLimit || 0 },
+    main, level,
+  };
 }
 
 /** Группирует пропуски по семестрам, новые сверху. */
@@ -278,6 +317,40 @@ export function sortTasks(tasks) {
     if (!a.due) return 1;
     if (!b.due) return -1;
     return new Date(a.due) - new Date(b.due);
+  });
+}
+
+/**
+ * Напоминания о задачах: накануне срока в заданный час, одно уведомление на день.
+ * Берём несделанные задачи со сроком в ближайшие две недели; если «накануне» уже прошло — не напоминаем.
+ * → [{ id, at: Date, title, body }] — id целый (ГГГГММДД дня срока), чтобы уведомление можно было заменить или отменить
+ */
+export function taskReminders(tasks, now = new Date(), hour = 19) {
+  const byDay = new Map();
+  for (const t of tasks) {
+    if (t.done || t.deleted || !t.due) continue;
+    const due = new Date(t.due);
+    if (Number.isNaN(+due)) continue;
+    const day = new Date(due.getFullYear(), due.getMonth(), due.getDate());
+    const at = new Date(day.getFullYear(), day.getMonth(), day.getDate() - 1, hour, 0, 0);
+    if (at <= now || at - now > 14 * 864e5) continue;
+    const k = isoDate(day);
+    if (!byDay.has(k)) byDay.set(k, { day, at, tasks: [] });
+    byDay.get(k).tasks.push({ t, due });
+  }
+  return [...byDay.values()].sort((a, b) => a.at - b.at).map(({ day, at, tasks: list }) => {
+    list.sort((a, b) => a.due - b.due);
+    const time = (d) => d.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
+    const n = list.length;
+    const one = list[0];
+    return {
+      id: day.getFullYear() * 10000 + (day.getMonth() + 1) * 100 + day.getDate(),
+      at,
+      title: n === 1 ? `Завтра сдавать: ${one.t.title}` : `Завтра сдавать: ${n} ${n < 5 ? "задачи" : "задач"}`,
+      body: n === 1
+        ? `К ${time(one.due)}${one.t.subject ? ` · ${one.t.subject}` : ""}`
+        : list.slice(0, 5).map(({ t, due }) => `${time(due)} · ${t.subject ? `${t.subject}: ` : ""}${t.title}`).join("\n") + (n > 5 ? `\nи ещё ${n - 5}` : ""),
+    };
   });
 }
 

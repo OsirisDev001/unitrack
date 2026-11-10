@@ -762,7 +762,9 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .manage(UpdateState::default());
     #[cfg(target_os = "android")]
-    let builder = builder.plugin(tauri_plugin_apk_installer::init());
+    let builder = builder
+        .plugin(tauri_plugin_apk_installer::init())
+        .plugin(tauri_plugin_notification::init()); // напоминания о задачах
     builder
         .setup(|app| {
             let dir = app.path().app_data_dir()?;

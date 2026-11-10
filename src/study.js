@@ -296,9 +296,17 @@ export function normalizePerformance(raw) {
         teacher: str(r.FIO_PREP),
       };
     })
+  const dated = items
     .filter((x) => /^\d{4}-\d{2}-\d{2}$/.test(x.date))
     .sort((a, b) => (a.date + a.start.padStart(5, "0")).localeCompare(b.date + b.start.padStart(5, "0")));
   const count = {};
-  for (const x of items) x.n = count[x.label] = (count[x.label] || 0) + 1;
-  return items;
+  for (const x of dated) x.n = count[x.label] = (count[x.label] || 0) + 1;
+  // Занятия, которые преподаватель уже расписал по темам, но без даты, — следующие по порядку.
+  // По ним досчитанной паре можно сразу показать тему, не дожидаясь, пока проставят дату.
+  const seqKey = (x) => x.seq.split(".").map((p) => p.padStart(4, "0")).join(".");
+  dated.planned = items
+    .filter((x) => !x.date && x.topic)
+    .map((x, i) => ({ ...x, i }))
+    .sort((a, b) => (a.seq && b.seq ? seqKey(a).localeCompare(seqKey(b)) : 0) || a.i - b.i);
+  return dated;
 }

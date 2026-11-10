@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { normalizeSchedule } from "../src/logic.js";
 import {
   parseGroupTitle, shortGroup, groupCatalog, diffWeeks, changeText, dayTogether, whereNow,
-  subjectsWithTypes, occurrences, relinkTasks, slotLabel, predictLessonNumbers,
+  subjectsWithTypes, occurrences, relinkTasks, slotLabel, predictLessonNumbers, accumulateChanges,
 } from "../src/schedule.js";
 
 const L = (timeStart, timeEnd, title, type, room = "101", address = "Гаспадарчая, 23", sub = "") => ({
@@ -131,4 +131,93 @@ test("номера пар, которых ещё нет в журнале", () =
   assert.equal(p.has("2026-10-26|13:30"), false); // уже в журнале
   // Предмета без совпавших пар не досчитываем.
   assert.equal(predictLessonNumbers(lessons, new Map()).size, 0);
+});
+
+test("изменения считаются только после понедельника 6:00", () => {
+  const monday = new Date(2026, 10, 9); // пн 9 нояб
+  const half = week({ "2026-11-09": [L("09:00", "10:25", "Сети", "лек.")] });
+  const full = week({
+    "2026-11-09": [L("09:00", "10:25", "Сети", "лек.")],
+    "2026-11-11": [L("11:40", "13:05", "Право", "лек."), L("13:30", "14:55", "Базы", "лаб.")],
+  });
+  const moved = week({
+    "2026-11-09": [L("09:00", "10:25", "Сети", "лек.")],
+    "2026-11-11": [L("11:40", "13:05", "Право", "лек.")],
+    "2026-11-12": [L("13:30", "14:55", "Базы", "лаб.")],
+  });
+  const sat = +new Date(2026, 10, 7, 12), mon8 = new Date(2026, 10, 9, 8), mon8ms = +mon8;
+
+  // Главный случай: в субботу неделя была выложена наполовину, приложение открыли только в понедельник в 8:00.
+  // Дозаполненные пары — не изменения, хотя заметили их уже после 6:00.
+  let r = accumulateChanges({ monday, oldDays: half, newDays: full, baseAt: sat, now: mon8 });
+  assert.equal(r.loud, 0);
+  assert.equal(r.list.length, 2);
+  assert.ok(r.list.every((c) => c.quiet));
+
+  // Теперь снимок понедельничный — перенос после него показываем.
+  r = accumulateChanges({ monday, oldDays: full, newDays: moved, prev: r.list, baseAt: mon8ms, now: new Date(2026, 10, 10, 9) });
+  assert.equal(r.loud, 1);
+  const shown = r.list.filter((c) => !c.quiet);
+  assert.deepEqual(shown.map((c) => c.kind), ["moved"]);
+
+  // То же изменение при следующей проверке второй раз не считаем.
+  r = accumulateChanges({ monday, oldDays: moved, newDays: moved, prev: r.list, baseAt: mon8ms + 1, now: new Date(2026, 10, 10, 10) });
+  assert.equal(r.loud, 0);
+  assert.equal(r.list.filter((c) => !c.quiet).length, 1);
+
+  // Перенос откатили — пометка исчезает.
+  r = accumulateChanges({ monday, oldDays: moved, newDays: full, prev: r.list, baseAt: mon8ms + 2, now: new Date(2026, 10, 10, 11) });
+  assert.equal(r.list.filter((c) => !c.quiet && c.kind === "moved" && c.after.date === "2026-11-12").length, 0);
+
+  // Время прошлого снимка неизвестно (обновились со старой версии) — молчим.
+  r = accumulateChanges({ monday, oldDays: half, newDays: full, baseAt: null, now: mon8 });
+  assert.equal(r.loud, 0);
+
+  // Следующая неделя до своего понедельника — всегда тихо, даже если прошлый снимок свежий.
+  const next = new Date(2026, 10, 16);
+  const nh = week({ "2026-11-16": [L("09:00", "10:25", "Сети", "лек.")] });
+  const nf = week({ "2026-11-16": [L("09:00", "10:25", "Сети", "лек.")], "2026-11-17": [L("09:00", "10:25", "Право", "лек.")] });
+  r = accumulateChanges({ monday: next, oldDays: nh, newDays: nf, baseAt: +new Date(2026, 10, 12, 10), now: new Date(2026, 10, 13, 10) });
+  assert.equal(r.loud, 0);
+
+  // Первого снимка нет вовсе — сравнивать не с чем.
+  r = accumulateChanges({ monday, oldDays: null, newDays: full, baseAt: null, now: mon8 });
+  assert.deepEqual(r.list, []);
+});
+
+test("тема следующей пары — из расписанных без даты занятий журнала", async () => {
+  const { normalizePerformance } = await import("../src/study.js");
+  const row = (d, kind, seq, topic) => ({ DATE_ACADEMIC: d, NPOCEN: kind, SSEQUENCE: seq, NUPCONTENT: topic, NDISC: "Экономика", SABSENT: "" });
+  const items = normalizePerformance([
+    row("2026-11-02 15:05:00", "Лекция", "1.", "Предмет экономики"),
+    row("2026-11-09 15:05:00", "Лекция", "2.", "Спрос и предложение"),
+    row("", "Практическое занятие", "3.", "Задачи на спрос и предложение"),
+    row("", "Лекция", "4.", "Эластичность"),
+    row("", "Практическое занятие", "5.", "Эластичность: задачи"),
+    row(null, "Лекция", "6.", ""), // без темы — не нужна
+  ]);
+  assert.equal(items.length, 2);
+  assert.deepEqual(items.planned.map((x) => `${x.label} ${x.topic}`), ["Практика Задачи на спрос и предложение", "Лекция Эластичность", "Практика Эластичность: задачи"]);
+
+  const les = (date, start, type) => ({ date, l: { start, title: "Экономика", type } });
+  const lessons = [
+    les("2026-11-02", "15:05", "лек."), les("2026-11-09", "15:05", "лек."),
+    les("2026-11-12", "13:30", "практ. зан."), // первая практика — в журнале с датой её ещё нет
+    les("2026-11-16", "15:05", "лек."),
+    les("2026-11-19", "13:30", "практ. зан."),
+  ];
+  const p = predictLessonNumbers(lessons, new Map([["77", items]]));
+  const pr1 = p.get("2026-11-12|13:30").item;
+  assert.equal(pr1.label, "Практика");
+  assert.equal(pr1.n, 1);
+  assert.equal(pr1.topic, "Задачи на спрос и предложение");
+  assert.equal(pr1.topicPlanned, true);
+  assert.equal(p.get("2026-11-16|15:05").item.n, 3);
+  assert.equal(p.get("2026-11-16|15:05").item.topic, "Эластичность");
+  assert.equal(p.get("2026-11-19|13:30").item.n, 2);
+  assert.equal(p.get("2026-11-19|13:30").item.topic, "Эластичность: задачи");
+  // Темы кончились — номер есть, темы нет.
+  const more = predictLessonNumbers([...lessons, les("2026-11-26", "13:30", "практ. зан.")], new Map([["77", items]]));
+  assert.equal(more.get("2026-11-26|13:30").item.n, 3);
+  assert.equal(more.get("2026-11-26|13:30").item.topic, "");
 });

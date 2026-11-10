@@ -2,7 +2,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  normalizeSkips, semesterStats, pendingSkips, semesterOf, normalizeSchedule, nextLesson, taskBucket, pluralPairs,
+  normalizeSkips, semesterStats, pendingSkips, taskReminders, attendanceSummary, semesterOf, normalizeSchedule, nextLesson, taskBucket, pluralPairs,
 } from "../src/logic.js";
 
 const P = "прогул";
@@ -122,15 +122,84 @@ test("свои записи о пропусках, которых ещё нет 
     { id: "c", date: "2026-11-10", start: "9:00", subject: "Сети", excused: true },
     { id: "d", date: "2026-11-11", start: "11:40", subject: "Право", deleted: true },
   ];
-  // 9 нояб: на портале 2 часа → первая пара дня (13:30) внесена, 15:05 ещё ждёт.
-  const portal = normalizeSkips([{ NDATA: "09.11.2026", KOLVO: "2", NPRICH: "прогул" }]);
-  const p = pendingSkips(marks, portal);
-  assert.deepEqual(p.map((x) => x.id), ["a", "c"]);
-  const s = semesterStats(portal, "2026-2", 36, p);
-  assert.equal(s.unexcused, 4); // 2 на портале + 2 ещё нет
+  // Портал пуст — все записи считаются.
+  let p = pendingSkips(marks, []);
+  assert.deepEqual(p.map((x) => `${x.id}${x.ask ? "?" : ""}`), ["b", "a", "c"]);
+  let s = semesterStats([], "2026-2", 36, p);
+  assert.equal(s.unexcused, 4);
   assert.equal(s.excused, 2);
-  assert.equal(s.pendingHours, 2);
-  // Деканат внёс всё — ничего не висит.
-  const full = normalizeSkips([{ NDATA: "09.11.2026", KOLVO: "4", NPRICH: "" }, { NDATA: "10.11.2026", KOLVO: "2", NPRICH: "заявление" }]);
-  assert.equal(pendingSkips(marks, full).length, 0);
+  assert.equal(s.pendingHours, 4);
+
+  // 9 нояб на портале появилось 2 часа: одна запись этого дня под вопросом и в счётчик не идёт (не задваиваем).
+  const portal = normalizeSkips([{ NDATA: "09.11.2026", KOLVO: "2", NPRICH: "прогул" }]);
+  p = pendingSkips(marks, portal);
+  assert.deepEqual(p.map((x) => `${x.id}${x.ask ? "?" : ""}`), ["b?", "a", "c"]);
+  assert.equal(p[0].portal, 2);
+  s = semesterStats(portal, "2026-2", 36, p);
+  assert.equal(s.unexcused, 4); // 2 на портале + 2 своих (15:05)
+
+  // Ответ «нет, на портале другая пара»: запись снова считается и больше не спрашивает…
+  const said = marks.map((m) => (m.id === "b" ? { ...m, other: 2 } : m));
+  p = pendingSkips(said, portal);
+  assert.deepEqual(p.map((x) => `${x.id}${x.ask ? "?" : ""}`), ["b", "a?", "c"]);
+  // …пока часов на портале не прибавится.
+  const more = normalizeSkips([{ NDATA: "09.11.2026", KOLVO: "4", NPRICH: "прогул" }]);
+  assert.deepEqual(pendingSkips(said, more).map((x) => `${x.id}${x.ask ? "?" : ""}`), ["b?", "a?", "c"]);
+});
+
+test("напоминания о задачах накануне срока", () => {
+  const now = new Date(2026, 10, 10, 12, 0); // вт 10 нояб, полдень
+  const due = (d, h, m = 0) => new Date(2026, 10, d, h, m).toISOString();
+  const tasks = [
+    { id: "1", title: "Лаба 4", subject: "Сети", due: due(11, 13, 30) },
+    { id: "2", title: "Задачи 1–5", subject: "Экономика", due: due(11, 9) },
+    { id: "3", title: "Эссе", subject: "", due: due(13, 15, 5) },
+    { id: "4", title: "Сделано", due: due(12, 9), done: true },
+    { id: "5", title: "Удалено", due: due(12, 9), deleted: true },
+    { id: "6", title: "Без срока", due: null },
+    { id: "7", title: "Сегодня вечером", due: due(10, 18) }, // «накануне» уже прошло
+    { id: "8", title: "Нескоро", due: new Date(2026, 11, 20, 9).toISOString() },
+  ];
+  const r = taskReminders(tasks, now, 19);
+  assert.equal(r.length, 2);
+  assert.equal(r[0].id, 20261111);
+  assert.equal(+r[0].at, +new Date(2026, 10, 10, 19, 0));
+  assert.equal(r[0].title, "Завтра сдавать: 2 задачи");
+  assert.equal(r[0].body, "09:00 · Экономика: Задачи 1–5\n13:30 · Сети: Лаба 4");
+  assert.equal(r[1].id, 20261113);
+  assert.equal(+r[1].at, +new Date(2026, 10, 12, 19, 0));
+  assert.equal(r[1].title, "Завтра сдавать: Эссе");
+  assert.equal(r[1].body, "К 15:05");
+  // После 19:00 накануне уже не напоминаем о завтрашнем.
+  assert.deepEqual(taskReminders(tasks, new Date(2026, 10, 10, 19, 30), 19).map((x) => x.id), [20261113]);
+  // Другой час.
+  assert.equal(+taskReminders(tasks, now, 21)[0].at, +new Date(2026, 10, 10, 21, 0));
+});
+
+test("посещаемость: ориентиры за месяц и за семестр", () => {
+  const skips = normalizeSkips([
+    { NDATA: "03.11.2026", KOLVO: "4", NPRICH: "прогул" },
+    { NDATA: "05.11.2026", KOLVO: "2", NPRICH: "прогул", KOLO: "2" }, // отработано — не считается
+    { NDATA: "06.11.2026", KOLVO: "6", NPRICH: "заявление на имя декана" },
+    { NDATA: "20.10.2026", KOLVO: "8", NPRICH: "прогул" },
+  ]);
+  const now = new Date(2026, 10, 10, 12);
+  const pending = [{ id: "a", date: "2026-11-09", start: "15:05", ask: false }, { id: "b", date: "2026-11-09", start: "16:40", ask: true }];
+  // Ориентиров нет — только цифры.
+  let a = attendanceSummary({ skips, pending, now });
+  assert.equal(a.month.unexcused, 6); // 4 + 2 своих (запись под вопросом не считаем)
+  assert.equal(a.month.excused, 6);
+  assert.equal(a.semester.unexcused, 14);
+  assert.equal(a.main, null);
+  assert.equal(a.level, "ok");
+  assert.equal(a.monthName, "ноябре");
+  // 20 ч в месяц и 36 за семестр: ближе к семестровому (14/36 < 6/20? нет: 0.39 > 0.3).
+  a = attendanceSummary({ skips, pending, now, semesterLimit: 36, monthLimit: 20 });
+  assert.equal(a.main.kind, "semester");
+  // Только месячный ориентир 8 ч — почти дошли.
+  a = attendanceSummary({ skips, pending, now, monthLimit: 8 });
+  assert.equal(a.main.kind, "month");
+  assert.equal(a.level, "near");
+  a = attendanceSummary({ skips, pending, now, monthLimit: 6 });
+  assert.equal(a.level, "over");
 });

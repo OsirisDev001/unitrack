@@ -59,6 +59,7 @@
         <button class="upd-banner hidden" id="upd-banner" type="button"></button>
         <button class="chg-banner hidden" id="chg-banner-today" type="button"></button>
         <div class="grid-today">
+          <article class="card card-span card-exams rise hidden" id="exams-card"></article>
           <article class="card card-next rise" id="next-card"></article>
           <article class="card card-meter rise" id="meter-card"></article>
           <article class="card card-span rise">
@@ -193,6 +194,11 @@
           <div class="icon-grid" id="icon-grid"></div>
           <p class="muted small" id="icon-note"></p>
         </article>
+        <article class="card stack rise hidden" id="remind-card">
+          <div class="card-head"><h2>Напоминания о задачах</h2><span class="muted small" id="remind-name"></span></div>
+          <div class="chips" id="remind-grid"></div>
+          <p class="muted small" id="remind-note">Одно уведомление накануне срока: что сдавать завтра. Работает без интернета, приложение открывать не нужно.</p>
+        </article>
         <article class="card stack rise">
           <h2>Синхронизация ноутбук ↔ телефон</h2>
           <div id="sync-server" class="hidden">
@@ -216,10 +222,11 @@
           </div>
         </article>
         <article class="card stack rise">
-          <h2>Пропуски</h2>
-          <label class="row">Лимит неуважительных часов за семестр
-            <input id="limit-input" type="number" min="1" max="200" step="1" />
-          </label>
+          <h2>Посещаемость</h2>
+          <div class="lim-row"><button type="button" class="pchip" data-lim="limit">Лимит за семестр</button>
+            <label class="lim-val">часов <input id="limit-input" type="number" min="1" max="200" step="1" /></label></div>
+          <div class="lim-row"><button type="button" class="pchip" data-lim="monthLimit">Лимит за месяц</button>
+            <label class="lim-val">часов <input id="month-limit-input" type="number" min="1" max="200" step="1" /></label></div>
         </article>
         <article class="card stack rise">
           <h2>Аккаунт</h2>

@@ -84,7 +84,26 @@ pub async fn fetch_week(dir: &Path, login: &str, monday: &str, sunday: &str) -> 
         &[("studentId", id), ("dateStart", start), ("dateEnd", end)],
     )
     .await?;
-    let _ = fs::write(week_file(dir, monday), &raw);
+    keep_or_write(&week_file(dir, monday), raw)
+}
+
+/// Есть ли в ответе хоть одна пара.
+fn has_lessons(raw: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(raw)
+        .ok()
+        .and_then(|v| v.get("days").and_then(|d| d.as_array()).cloned())
+        .map(|days| days.iter().any(|d| d.get("lessons").and_then(|l| l.as_array()).is_some_and(|l| !l.is_empty())))
+        .unwrap_or(false)
+}
+
+/// Сохраняем свежую неделю, но не затираем сохранённые пары пустым ответом: при сбое сайт может отдать
+/// пустую неделю, а прошлые недели повторно не скачиваются — копия пропала бы насовсем.
+/// Такой ответ считаем ошибкой сети: приложение покажет сохранённое и попробует позже.
+fn keep_or_write(file: &Path, raw: String) -> Result<String, String> {
+    if !has_lessons(&raw) && fs::read_to_string(file).is_ok_and(|old| has_lessons(&old)) {
+        return Err("Сайт вернул пустую неделю — оставляю сохранённую".into());
+    }
+    let _ = fs::write(file, &raw);
     Ok(raw)
 }
 
@@ -186,8 +205,7 @@ pub async fn fetch_schedule(dir: &Path, kind: Kind, id: &str, monday: &str, sund
         Kind::Teacher => ("app1/getTeacherSchedule", "teacherId"),
     };
     let raw = get(path, &[(key, id.to_string()), ("dateStart", start), ("dateEnd", end)]).await?;
-    let _ = fs::write(sched_file(dir, kind, id, monday), &raw);
-    Ok(raw)
+    keep_or_write(&sched_file(dir, kind, id, monday), raw)
 }
 
 pub fn cached_schedule(dir: &Path, kind: Kind, id: &str, monday: &str) -> Option<String> {
@@ -269,6 +287,24 @@ mod tests {
 
 #[cfg(test)]
 mod live {
+    #[test]
+    fn empty_week_never_overwrites_saved_lessons() {
+        use super::keep_or_write;
+        use std::fs;
+        let dir = std::env::temp_dir().join(format!("unitrack-keep-{}", std::process::id()));
+        let _ = fs::create_dir_all(&dir);
+        let f = dir.join("week_test.json");
+        let full = r#"{"days":[{"date":"2026-11-09","lessons":[{"title":"Сети"}]}]}"#.to_string();
+        let empty = r#"{"days":[{"date":"2026-11-09","lessons":[]}]}"#.to_string();
+        let _ = fs::remove_file(&f);
+        assert!(keep_or_write(&f, empty.clone()).is_ok()); // сохранённого нет — пустую неделю пишем
+        assert!(keep_or_write(&f, full.clone()).is_ok());
+        assert!(keep_or_write(&f, empty).is_err()); // пары не затираем
+        assert_eq!(fs::read_to_string(&f).unwrap(), full);
+        assert!(keep_or_write(&f, r#"{"days":[]}"#.to_string()).is_err());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
     /// Реальный запрос к api.grsu.by: `UNITRACK_LOGIN=... cargo test -- --ignored live`
     #[tokio::test]
     #[ignore]

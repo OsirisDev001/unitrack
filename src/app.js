@@ -1,13 +1,13 @@
 import {
   DEFAULT_LIMIT, normalizeSkips, semesterStats, pendingSkips, semesterOf, groupBySemester, normalizeSchedule,
   lessonStatus, nextLesson, subjectsFrom, taskBucket, BUCKETS, sortTasks, relativeDue, sameDay,
-  pluralHours, pluralPairs, lessonPhase, HALF, BREAK,
+  pluralHours, pluralPairs, lessonPhase, HALF, BREAK, taskReminders, attendanceSummary,
   normalizeTeachers, mondayOf, addDays, isoDate, buildWeek, weekLessons, forecastWeek, weekLabel, parseIsoDate,
 } from "./logic.js";
 import { demoBackend } from "./demo.js";
 import {
   groupCatalog, shortGroup, diffWeeks, slotKey, changeText, durationText, whereNow,
-  relinkTasks, subjectsWithTypes, occurrences, kindOf, lessonDue, slotLabel, dayTogether, predictLessonNumbers,
+  relinkTasks, subjectsWithTypes, occurrences, kindOf, accumulateChanges, isExam, lessonDue, slotLabel, dayTogether, predictLessonNumbers,
 } from "./schedule.js";
 import {
   normalizeProgress, progressBySemester, normalizeAttestation, normalizeRating, normalizeLibrary, normalizeHostel,
@@ -52,6 +52,8 @@ const api = tauri
       fetchPerformance: (kdisc, semester, year, lang) => tauri.invoke("fetch_performance", { kdisc, semester, year, lang }),
       cachedPerformance: (kdisc, semester, year) => tauri.invoke("cached_performance", { kdisc, semester, year }),
       setAppIcon: (name) => tauri.invoke("set_app_icon", { name }),
+      // Локальные уведомления (только Android): плагин уведомлений Tauri.
+      notify: (cmd, args) => tauri.invoke(`plugin:notification|${cmd}`, args),
     }
   : demoBackend();
 
@@ -72,6 +74,7 @@ const state = {
   favorites: [],       // синхронизируется между устройствами, как задачи
   skipMarks: [],       // свои записи о пропусках, пока деканат не внёс; тоже синхронизируются
   changes: {},         // понедельник → { list, seen } — что поменялось в моём расписании
+  weekSeen: {},        // понедельник → когда скачан сохранённый снимок недели (чтобы отличить «дозаполнили» от «изменили»)
   search: { tab: "group", faculties: null, catalogs: {}, openFaculty: null, openSpec: null, query: "", student: null, studentErr: "", busy: false },
   windowsWith: null,
   perf: new Map(),      // kdisc → { course, items } — журнал предмета
@@ -119,8 +122,10 @@ async function loadLocal() {
   try { state.skipMarks = JSON.parse((await api.load("skip_marks")) || "[]"); } catch { state.skipMarks = []; }
   // 0.3.1: новый ключ — старые пометки копились и с выходных, пока неделю только заполняли; начинаем с чистого листа.
   try { state.changes = JSON.parse((await api.load("sched_changes2")) || "{}"); } catch { state.changes = {}; }
+  try { state.weekSeen = JSON.parse((await api.load("week_seen")) || "{}"); } catch { state.weekSeen = {}; }
   const old = isoDate(addDays(mondayOf(new Date()), -7));
   for (const k of Object.keys(state.changes)) if (k < old) delete state.changes[k];
+  for (const k of Object.keys(state.weekSeen)) if (k < old) delete state.weekSeen[k];
 }
 // Удалённые задачи остаются «надгробиями» (deleted: true), чтобы удаление доехало до другого устройства.
 const liveTasks = () => state.tasks.filter((t) => !t.deleted);
@@ -128,6 +133,7 @@ const touch = (t) => { t.updated = Date.now(); return t; };
 async function saveTasks() {
   await api.save("tasks", JSON.stringify(state.tasks));
   scheduleSync();
+  scheduleReminders();
 }
 const saveSettings = () => api.save("settings", JSON.stringify(state.settings));
 const saveChanges = () => api.save("sched_changes2", JSON.stringify(state.changes));
@@ -159,7 +165,7 @@ async function loadCache() {
   const tc = await api.cachedTeachers?.();
   if (tc) try { state.teachers = normalizeTeachers(JSON.parse(tc)); } catch {}
   const cur = mondayOf(new Date());
-  await Promise.all([addDays(cur, -7), cur, addDays(cur, 7)].map(async (m) => {
+  await Promise.all([-1, 0, 1, 2, 3, 4, 5].map((k) => addDays(cur, 7 * k)).map(async (m) => {
     const raw = await api.cachedWeek?.(isoDate(m));
     if (raw) try { state.weekRaw.set(isoDate(m), JSON.parse(raw)); } catch {}
   }));
@@ -297,6 +303,13 @@ function rebuildDays() {
   state.days = [...weekDays(cur, null), ...weekDays(addDays(cur, 7), null)];
 }
 
+/** Сколько недель вперёд от текущей уже выложено на сайте (последняя неделя с парами). */
+function publishedAhead(who = null) {
+  let n = 0;
+  for (let k = 1; k <= 5; k++) if (weekLessons(weekDays(addDays(currentMonday(), 7 * k), who, false))) n = k;
+  return n;
+}
+
 /** Моё расписание на 6 недель вперёд (с прогнозом) — для сроков задач «к паре». */
 const planDays = () => [0, 1, 2, 3, 4, 5].flatMap((k) => weekDays(addDays(currentMonday(), 7 * k), null));
 
@@ -317,7 +330,11 @@ async function loadWeek(monday, who = state.viewing) {
   if (sameWho(who, state.viewing) && +monday === +state.weekStart) renderSchedule();
   try {
     const fresh = JSON.parse(await (who ? api.fetchSchedule(who.kind, who.id, iso, sunday) : api.fetchWeek(iso, sunday)));
-    if (!who) noteChanges(monday, map.get(key), fresh);
+    if (!who) {
+      noteChanges(monday, map.get(key), fresh);
+      state.weekSeen[key] = Date.now();
+      api.save("week_seen", JSON.stringify(state.weekSeen));
+    }
     map.set(key, fresh);
   } catch {
     state.weekFetched.delete(key); // нет сети — попробуем в следующий раз
@@ -327,25 +344,16 @@ async function loadWeek(monday, who = state.viewing) {
   }
 }
 
-/** Сравниваем сохранённую неделю с новой и копим изменения (A). */
+/** Сравниваем сохранённую неделю с новой и копим изменения (A). Что считать изменением — в accumulateChanges. */
 function noteChanges(monday, oldRaw, newRaw) {
   const key = isoDate(monday);
   const norm = (r) => buildWeek(monday, normalizeSchedule(r, state.teachers));
-  const fresh = norm(newRaw);
-  const found = oldRaw ? diffWeeks(norm(oldRaw), fresh) : [];
-  const sig = (c) => `${c.kind}|${c.before ? slotKey(c.before.date, c.before) : ""}|${c.after ? slotKey(c.after.date, c.after) : ""}`;
-  const prev = state.changes[key]?.list || [];
-  const known = new Set(prev.map(sig));
-  // До понедельника 6:00 неделю ещё заполняют: такие правки не считаем изменениями (не подсвечиваем),
-  // но запоминаем тихо — по ним сдвигаются сроки задач.
-  const quiet = Date.now() < +monday + 6 * 3600e3;
-  const added = found.filter((c) => !known.has(sig(c))).map((c) => (quiet ? { ...c, quiet: true } : c));
-  const loud = added.filter((c) => !c.quiet);
-  // Изменение, которое потом откатили, больше не показываем.
-  const slots = new Set(fresh.flatMap((d) => d.lessons.map((l) => slotKey(d.date, l))));
-  const list = [...prev, ...added].filter((c) => (c.after ? slots.has(slotKey(c.after.date, c.after)) : !slots.has(slotKey(c.before.date, c.before))));
-  if (!list.length) { if (state.changes[key]) { delete state.changes[key]; saveChanges(); } return; }
-  state.changes[key] = { list, seen: loud.length ? false : state.changes[key]?.seen ?? !list.some((c) => !c.quiet) };
+  const prev = state.changes[key];
+  const { list, loud } = accumulateChanges({
+    monday, oldDays: oldRaw ? norm(oldRaw) : null, newDays: norm(newRaw), prev: prev?.list || [], baseAt: state.weekSeen[key] ?? null,
+  });
+  if (!list.length) { if (prev) { delete state.changes[key]; saveChanges(); } return; }
+  state.changes[key] = { list, seen: loud ? false : prev?.seen ?? !list.some((c) => !c.quiet) };
   saveChanges();
 }
 
@@ -395,6 +403,12 @@ async function refreshWeeks() {
   state.weekFetched.clear();
   const cur = currentMonday();
   await Promise.all([cur, addDays(cur, 7)].map((m) => loadWeek(m, null)));
+  // Сайт часто выложил расписание на 3–4 недели вперёд (там же зачёты) — берём дальние недели, пока не пойдёт пустая.
+  // Без этого вместо опубликованной недели показывался прогноз-копия текущей.
+  for (let k = 2; k <= 5; k++) {
+    await loadWeek(addDays(cur, 7 * k), null);
+    if (!weekLessons(weekDays(addDays(cur, 7 * k), null, false))) break;
+  }
   if (state.viewing || (state.weekStart && ![+cur, +addDays(cur, 7)].includes(+state.weekStart))) loadWeek(state.weekStart || cur);
   renderWeekChange();
 }
@@ -542,13 +556,20 @@ $("#refresh-btn").addEventListener("click", refresh);
 // ---------- рендер: общее ----------
 
 /** «практ. зан.» → «практ», «лек.» → «лек»: везде без точек. */
+/** «Зачет (в устной форме)» → «зачёт · устно». */
+const examWord = (type) => {
+  const k = kindOf(type), t = String(type).toLowerCase();
+  const base = k === "зач" ? (t.includes("диф") ? "диф. зачёт" : "зачёт") : k === "экз" ? "экзамен" : "консультация";
+  return base + (t.includes("устн") ? " · устно" : t.includes("письм") ? " · письменно" : "");
+};
 const typeShort = (type) => String(type || "").replace(/\s*зан\.?/, "").replace(/\./g, "").trim();
 
 /** Метка вида пары; с номером из журнала — «практ | 10», нажатие открывает журнал предмета. */
 function typeTag(type, pf = null) {
   if (!type) return "";
   const t = type.toLowerCase();
-  const cls = t.startsWith("лек") ? "lec" : t.startsWith("лаб") ? "lab" : t.startsWith("практ") ? "prac" : t.startsWith("сем") ? "sem" : "";
+  const cls = t.startsWith("лек") ? "lec" : t.startsWith("лаб") ? "lab" : t.startsWith("практ") ? "prac" : t.startsWith("сем") ? "sem" : isExam(type) ? "exam" : "";
+  if (isExam(type)) return `<span class="tag tag-exam" title="${esc(type)}">${esc(examWord(type))}</span>`;
   if (!pf) return `<span class="tag tag-${cls}">${esc(typeShort(type))}</span>`;
   return `<button class="tag tag-${cls} tag-num" data-journal="${esc(pf.kdisc)}" data-at="${esc(`${pf.item.date}|${pf.item.start}`)}" title="${esc(pf.item.label)} №${pf.item.n}">${esc(typeShort(type))}<span class="n">${pf.item.n}</span></button>`;
 }
@@ -560,7 +581,7 @@ function lessonHTML(day, l, now, change = null, mine = true) {
   // Номер — в метке вида пары («практ | 10»); тема — плашкой снизу, только когда её внесли в журнал.
   const marks = pf ? `${pf.item.absent ? `<i class="mark absent">${esc(pf.item.absent)}</i>` : ""}${pf.item.mark ? `<i class="mark">${esc(pf.item.mark)}</i>` : ""}` : "";
   const journal = pf?.item.topic
-    ? `<button class="lesson-num" data-journal="${esc(pf.kdisc)}" data-at="${esc(`${pf.item.date}|${pf.item.start}`)}"><span>${esc(pf.item.topic)}</span>${marks}</button>`
+    ? `<button class="lesson-num" data-journal="${esc(pf.kdisc)}" data-at="${esc(`${pf.item.date}|${pf.item.start}`)}"><span>${esc(pf.item.topic)}</span>${pf.item.topicPlanned ? `<small class="plan">по плану</small>` : ""}${marks}</button>`
     : "";
   const st = change?.kind === "cancelled" ? "cancelled" : lessonStatus(day, l, now);
   const room = l.room ? `ауд. ${change?.kind === "room" ? `<s>${esc(change.before.room)}</s> → <b class="chg">${esc(l.room)}</b>` : esc(l.room)}${l.address ? `, ${esc(l.address)}` : ""}` : "";
@@ -569,7 +590,7 @@ function lessonHTML(day, l, now, change = null, mine = true) {
     : l.teacher
       ? `<span class="${l.teacherId && state.teachers.has(l.teacherId) ? "t-link" : ""}" ${l.teacherId && state.teachers.has(l.teacherId) ? `data-teacher="${esc(l.teacherId)}"` : ""}>${esc(l.teacher)}${l.teacherPost ? `<em class="post">, ${esc(lowerFirst(l.teacherPost))}</em>` : ""}</span>`
       : "";
-  return `<div class="lesson ${st} ${l.forecast ? "forecast" : ""} ${change && change.kind !== "cancelled" ? "changed" : ""}">
+  return `<div class="lesson ${st} ${l.forecast ? "forecast" : ""} ${change && change.kind !== "cancelled" ? "changed" : ""} ${isExam(l.type) ? "exam" : ""}">
     <div class="lesson-time">${esc(l.start)}<span>${esc(l.end)}</span></div>
     <div>
       <div class="lesson-title">${typeTag(l.type, pf)}${pf && !pf.item.topic && marks ? `<span class="num-side">${marks}</span>` : ""}${esc(l.title)}</div>
@@ -600,21 +621,41 @@ function dayLessonsHTML(day, now, changes) {
   return rows.sort((a, b) => a[0] - b[0]).map((r) => r[1]).join("");
 }
 
-function ringHTML(s) {
-  const pct = Math.min(100, Math.round(s.ratio * 100));
-  return `<div class="ring lvl-${s.level}" style="--p:${pct}"><b><span data-count="${s.unexcused}" data-ck="ring-${s.limit}">0</span><small>/${s.limit}</small></b></div>`;
+/**
+ * Кольца посещаемости: по одному на каждый включённый лимит (месяц и/или семестр), цвет — по заполненности,
+ * как раньше: до половины — цвет темы, с половины жёлтый, с 75% и дальше красный. Без лимитов — часы за семестр.
+ */
+const ringLevel = (r) => (r >= 1 ? "over" : r >= 0.75 ? "danger" : r >= 0.5 ? "warn" : "ok");
+function ringHTML(a) {
+  const gs = [];
+  if (a.month.limit) gs.push({ kind: "month", used: a.month.unexcused, limit: a.month.limit, cap: "за месяц" });
+  if (state.settings.limit) gs.push({ kind: "sem", used: a.semester.unexcused, limit: state.settings.limit, cap: "за семестр" });
+  if (!gs.length) return `<div class="ring lvl-ok ring-plain"><b><span data-count="${a.semester.unexcused}" data-ck="ring-s">0</span><small>ч</small></b></div>`;
+  const one = (g) => `<div class="ring lvl-${ringLevel(g.used / g.limit)}" style="--p:${Math.min(100, Math.round((g.used / g.limit) * 100))}">
+    <b><span data-count="${g.used}" data-ck="ring-${g.kind}-${g.limit}">0</span><small>/${g.limit}</small></b></div>`;
+  if (gs.length === 1) return one(gs[0]);
+  return `<div class="rings">${gs.map((g) => `<div class="ring-cap">${one(g)}<span>${esc(g.cap)}</span></div>`).join("")}</div>`;
 }
 
-function meterVerdict(s) {
-  if (s.level === "over") return `<span class="danger">Лимит превышен на ${pluralHours(s.unexcused - s.limit)}</span>`;
-  const txt = `Можно пропустить ещё ${pluralPairs(s.pairsLeft)}`;
-  if (s.level === "danger") return `<span class="danger">${txt}. Осторожно</span>`;
-  if (s.level === "warn") return `<span class="warn">${txt}</span>`;
-  return `<span>${txt}</span>`;
+/** Строки под кольцом: что есть, без советов. Цвет — только когда подошли к лимиту или прошли его. */
+function attendanceLines(a) {
+  const m = a.month, s = a.semester;
+  const of = (limit) => (limit ? ` из ${limit}` : "");
+  // Только те лимиты, что включены. Без лимитов — просто часы за семестр.
+  const lines = [];
+  if (m.limit) lines.push(`<span>В ${a.monthName}: ${pluralHours(m.unexcused)}${of(m.limit)}</span>`);
+  if (state.settings.limit || !m.limit) lines.push(`<span>За семестр: ${pluralHours(s.unexcused)}${of(state.settings.limit)}</span>`);
+  const g = a.main;
+  if (g && a.level === "over") lines.push(`<span class="danger">Больше лимита ${g.kind === "month" ? "за месяц" : "за семестр"} на ${pluralHours(g.used - g.limit)}</span>`);
+  else if (g && a.level === "near") lines.push(`<span class="warn">Близко к лимиту ${g.kind === "month" ? "за месяц" : "за семестр"}</span>`);
+  return lines.join("");
 }
 
 function currentStats(now = new Date()) {
-  return semesterStats(state.skips, semesterOf(now).key, state.settings.limit, pendingSkips(state.skipMarks, state.skips));
+  return attendanceSummary({
+    skips: state.skips, pending: pendingSkips(state.skipMarks, state.skips), now,
+    semesterLimit: state.settings.limit || 0, monthLimit: state.settings.monthLimit || 0,
+  });
 }
 
 // ---------- свои записи о пропусках (пока деканат не внёс) ----------
@@ -681,7 +722,8 @@ document.addEventListener("click", (e) => {
   const m = state.skipMarks.find((x) => x.id === r.dataset.pendId);
   if (!m) return;
   if (r.dataset.pendAct === "excused") m.excused = !m.excused;
-  else { m.deleted = true; toast("Запись удалена"); }
+  else if (r.dataset.pendAct === "other") m.other = Number(r.dataset.portal) || 0; // на портале другая пара — моя запись остаётся
+  else { m.deleted = true; toast(r.dataset.pendAct === "same" ? "Убрал: пропуск уже на портале" : "Запись удалена"); }
   touch(m);
   saveSkipMarks();
   renderAll();
@@ -722,6 +764,7 @@ function renderToday(now = new Date()) {
 
   // следующая пара
   const n = nextLesson(state.days, now);
+  renderExams(now);
   const nc = $("#next-card");
   if (!n) {
     nc.html = `<div class="next-label">Пары</div><div class="next-title">${state.days.length ? "На ближайшие дни пар нет" : "Расписание ещё не загружено"}</div>`;
@@ -767,13 +810,30 @@ function renderToday(now = new Date()) {
 
   // пропуски
   const s = currentStats(now);
-  $("#meter-card").html = `
-    <div class="card-head"><h2>Пропуски за семестр</h2><button class="link" data-go="skips">Подробнее →</button></div>
+  const extra = `<span class="muted small">${s.semester.pendingHours ? `${pluralHours(s.semester.pendingHours)} ещё нет на портале. ` : ""}По заявлению: ${pluralHours(s.semester.excused)}</span>`;
+  // Оба лимита: две аккуратные строки «кольцо + подпись» вместо двух колец и повтора тех же цифр текстом.
+  if (s.month.limit && state.settings.limit) {
+    const row = (used, limit, title, key) => `<div class="meter-row">
+      <div class="ring lvl-${ringLevel(used / limit)}" style="--p:${Math.min(100, Math.round((used / limit) * 100))}"></div>
+      <div><span class="muted small">${title}</span><b>${used} из ${limit} ч</b></div></div>`;
+    const g = s.main;
+    $("#meter-card").html = `
+      <div class="card-head"><h2>Посещаемость</h2><button class="link" data-go="skips">Подробнее →</button></div>
+      <strong class="meter-title">Без уважительной причины</strong>
+      <div class="meter-rows">
+        ${row(s.month.unexcused, s.month.limit, `За ${esc(now.toLocaleString("ru-RU", { month: "long" }))}`, `rm-${s.month.limit}`)}
+        ${row(s.semester.unexcused, state.settings.limit, "За семестр", `rs-${state.settings.limit}`)}
+      </div>
+      ${g && s.level === "over" ? `<span class="danger small">Больше лимита ${g.kind === "month" ? "за месяц" : "за семестр"} на ${pluralHours(g.used - g.limit)}</span>`
+        : g && s.level === "near" ? `<span class="warn small">Близко к лимиту ${g.kind === "month" ? "за месяц" : "за семестр"}</span>` : ""}
+      ${extra}`;
+  } else $("#meter-card").html = `
+    <div class="card-head"><h2>Посещаемость</h2><button class="link" data-go="skips">Подробнее →</button></div>
     <div class="meter">${ringHTML(s)}
       <div class="meter-text">
-        <strong>${pluralHours(s.unexcused)} неуважит.</strong>
-        ${meterVerdict(s)}
-        <span class="muted small">${s.pendingHours ? `Из них ${pluralHours(s.pendingHours)} ещё нет на портале. ` : ""}По заявлению: ${pluralHours(s.excused)}, в лимит не идут</span>
+        <strong>Без уважительной причины</strong>
+        ${attendanceLines(s)}
+        <span class="muted small">${s.semester.pendingHours ? `${pluralHours(s.semester.pendingHours)} ещё нет на портале. ` : ""}По заявлению: ${pluralHours(s.semester.excused)}</span>
       </div>
     </div>`;
 
@@ -800,8 +860,9 @@ function weekSub(monday) {
   if (diff === 0) return "эта неделя";
   if (diff === 1) return "следующая неделя";
   if (diff === -1) return "прошлая неделя";
-  const n = -diff;
-  return `${n} ${n % 10 === 1 && n % 100 !== 11 ? "неделю" : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 12 || n % 100 > 14) ? "недели" : "недель"} назад`;
+  const n = Math.abs(diff);
+  const w = `${n} ${n % 10 === 1 && n % 100 !== 11 ? "неделю" : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 12 || n % 100 > 14) ? "недели" : "недель"}`;
+  return diff > 0 ? `через ${w}` : `${w} назад`;
 }
 
 function renderSchedule(now = new Date()) {
@@ -828,7 +889,8 @@ function renderSchedule(now = new Date()) {
   $("#week-label").textContent = weekLabel(monday);
   $("#week-sub").html = esc(weekSub(monday)) + (forecast ? ` · <span class="pre">предварительно</span>` : "");
   $("#week-prev").disabled = monday <= addDays(cur, -7 * MAX_BACK_WEEKS);
-  $("#week-next").disabled = monday >= addDays(cur, 7);
+  // Вперёд — пока сайт выложил расписание (обычно 3–4 недели, там же зачёты), плюс одна неделя прогноза.
+  $("#week-next").disabled = monday >= addDays(cur, 7 * Math.max(1, publishedAhead(state.viewing) + 1));
   $("#week-today").classList.toggle("hidden", +monday === +cur);
 
   // Воскресенье показываем, только если в него есть пары.
@@ -985,7 +1047,7 @@ function renderJournal() {
       <div class="j-row ${x.date > today ? "future" : ""} ${state.journal.at === `${x.date}|${x.start}` ? "hl" : ""}" data-row="${esc(`${x.date}|${x.start}`)}">
         <div class="j-date">${esc(fmtDay(parseIsoDate(x.date), { day: "numeric", month: "short" }))}<span>${esc(fmtDay(parseIsoDate(x.date), { weekday: "short" }))} ${esc(x.start)}</span></div>
         <div><div class="j-title"><b>${esc(x.label)} №${x.n}</b>${x.seq ? `<small>тема ${esc(x.seq)}</small>` : ""}</div>
-          ${x.topic ? `<div class="j-topic">${esc(x.topic)}</div>` : x.next ? `<div class="j-topic">тема появится, когда пару внесут в журнал</div>` : ""}</div>
+          ${x.topic ? `<div class="j-topic">${esc(x.topic)}${x.topicPlanned ? ` <small class="plan">по плану</small>` : ""}</div>` : x.next ? `<div class="j-topic">тема появится, когда пару внесут в журнал</div>` : ""}</div>
         <div class="j-marks">${x.absent ? `<i class="mark absent">${esc(x.absent)}</i>` : ""}${x.mark ? `<i class="mark">${esc(x.mark)}</i>` : ""}</div>
       </div>`).join("") || `<div class="empty">В журнале пока пусто.</div>`}</div>`;
   const hl = body.querySelector(".j-row.hl");
@@ -1230,7 +1292,8 @@ function renderTasks(now = new Date()) {
   const plan = planDays();
   $("#quick-chips").html = subjectsWithTypes(plan, now).slice(0, 4).map((x) => {
     const o = occurrences(plan, x.subject, null, now, 1)[0];
-    return o ? `<button class="pchip" data-quick-subj="${esc(x.subject)}" title="Добавить к следующей паре">к след. паре: ${esc(shortSubject(x.subject))}<small>${esc(slotLabel(o.date, o.start))}</small></button>` : "";
+    // Чип называет вид пары («к след. практике») и привязывает задачу именно к нему — чтобы домашка к практике не уехала на лекцию.
+    return o ? `<button class="pchip" data-quick-subj="${esc(x.subject)}" data-quick-type="${esc(o.type)}" title="Добавить к этой паре">к ${esc(typeWords(o.type)[1].replace(/^Следующе(й|му) /, "след. "))}: ${esc(shortSubject(x.subject))}<small>${esc(slotLabel(o.date, o.start))}</small></button>` : "";
   }).join("");
 
   const urgent = groups.overdue.length + groups.today.length;
@@ -1265,9 +1328,9 @@ $("#quick-chips").addEventListener("click", (e) => {
   if (!b) return;
   const title = $("#quick-title").value.trim();
   if (!title) { toast("Сначала напиши, что сделать"); return $("#quick-title").focus(); }
-  const o = occurrences(planDays(), b.dataset.quickSubj, null, new Date(), 1)[0];
+  const o = occurrences(planDays(), b.dataset.quickSubj, b.dataset.quickType || null, new Date(), 1)[0];
   if (!o) return;
-  state.tasks.push(linkTask({ id: crypto.randomUUID(), title, subject: o.title, kind: guessKind(title), notes: "", done: false, created: Date.now(), updated: Date.now() }, o, null));
+  state.tasks.push(linkTask({ id: crypto.randomUUID(), title, subject: o.title, kind: guessKind(title), notes: "", done: false, created: Date.now(), updated: Date.now() }, o, o.type));
   saveTasks();
   $("#quick-title").value = "";
   toast(`Добавлено к ${NOUN(o.type)} ${slotLabel(o.date, o.start)}`);
@@ -1484,59 +1547,84 @@ function renderSkips(now = new Date()) {
       <div class="skips-hero">${ringHTML(s)}
         <div class="meter-text">
           <span class="muted small">${esc(sem.label)}</span>
-          <strong style="font-size:20px">${pluralHours(s.unexcused)} из ${s.limit} неуважительных</strong>
-          ${meterVerdict(s)}
-          ${s.pendingHours ? `<span class="muted small">Из них ${pluralHours(s.pendingHours)} ещё нет на портале</span>` : ""}
+          <strong style="font-size:20px">Без уважительной причины</strong>
+          ${attendanceLines(s)}
+          ${s.semester.pendingHours ? `<span class="muted small">${pluralHours(s.semester.pendingHours)} ещё нет на портале</span>` : ""}
         </div>
       </div>
       <div class="stats">
-        <div class="stat"><b>${s.left}</b><span>часов до лимита</span></div>
-        <div class="stat"><b>${s.excused}</b><span>по заявлению</span></div>
-        <div class="stat"><b>${s.worked}</b><span>отработано</span></div>
+        ${s.month.limit ? `<div class="stat"><b>${s.month.unexcused}</b><span>ч в ${esc(s.monthName)}</span></div>` : `<div class="stat"><b>${s.semester.unexcused}</b><span>ч за семестр</span></div>`}
+        <div class="stat"><b>${s.semester.excused}</b><span>ч по заявлению</span></div>
+        <div class="stat"><b>${s.semester.worked}</b><span>ч отработано</span></div>
       </div>
     </div>`;
 
-  const pend = s.pending;
-  const pendHTML = pend.length ? `<div class="sem-title"><span>Ещё нет на портале</span><span>${pend.length} ${pend.length === 1 ? "пара" : pend.length < 5 ? "пары" : "пар"} · уже в счётчике</span></div>
+  const pend = s.semester.pending;
+  const pendHTML = pend.length ? `<div class="sem-title"><span>Ещё нет на портале</span><span>${(() => { const c = pend.filter((x) => !x.ask).length, q = pend.length - c;
+      return [c ? `${c} в счётчике` : "", q ? `${q} ${q === 1 ? "ждёт ответа" : "ждут ответа"}` : ""].filter(Boolean).join(" · "); })()}</span></div>
     <div class="skip-list">${pend.map((x) => `
-      <div class="skip-row pend-row">
+      <div class="skip-row pend-row ${x.ask ? "ask" : ""}">
         <span>${fmtDay(parseIsoDate(x.date), { day: "numeric", month: "short", weekday: "short" })} · ${esc(x.start)}</span>
         <span class="pend-subj">${esc(x.subject)}</span>
-        <span class="pend-acts">
+        ${x.ask ? `<span class="pend-ask">На портале за этот день появилось ${pluralHours(x.portal)}. Это она?
+            <span class="pend-acts">
+              <button class="pchip on" data-pend-act="same" data-pend-id="${esc(x.id)}">Да, убрать</button>
+              <button class="pchip" data-pend-act="other" data-portal="${x.portal}" data-pend-id="${esc(x.id)}">Нет, другая пара</button>
+            </span></span>`
+          : `<span class="pend-acts">
           <button class="pchip ${x.excused ? "on" : ""}" data-pend-act="excused" data-pend-id="${esc(x.id)}">уваж.</button>
           <button class="icon-btn sm" data-pend-act="remove" data-pend-id="${esc(x.id)}" aria-label="Удалить">×</button>
-        </span>
+        </span>`}
       </div>`).join("")}</div>
-    <p class="muted small pend-hint">Исчезнут сами, когда деканат внесёт пропуск на портал.</p>` : "";
+    <p class="muted small pend-hint">Когда деканат внесёт пропуск за этот день, спрошу, та ли это пара, — и уберу запись.</p>` : "";
   const groups = groupBySemester(state.skips);
   $("#skips-list").html = pendHTML + (groups.length
     ? groups.map((g) => {
         const gs = semesterStats(state.skips, g.key, state.settings.limit);
-        return `<div class="sem-title"><span>${esc(g.label)}</span><span>${gs.unexcused} неуваж. · ${gs.excused} уваж.</span></div>
+        return `<div class="sem-title"><span>${esc(g.label)}</span><span>${gs.unexcused} ч без причины · ${gs.excused} ч по заявлению</span></div>
           <div class="skip-list">${g.items.map((x) => `
             <div class="skip-row">
               <span>${fmtDay(x.date, { day: "numeric", month: "short", weekday: "short" })}</span>
               <span class="skip-h">${x.hours} ч${x.worked ? ` <small class="muted">−${x.worked}</small>` : ""}</span>
-              <span class="skip-reason ${x.unexcused ? "bad" : "good"}">${esc(x.reason || "без причины")}</span>
+              <span class="skip-reason ${x.unexcused ? "plain" : "good"}">${esc(x.unexcused ? "без уважительной" : x.reason || "по заявлению")}</span>
             </div>`).join("")}</div>`;
       }).join("")
     : pend.length ? "" : `<div class="empty">Пропусков нет — или данные ещё не загрузились.</div>`);
 
-  $("#limit-input").value = state.settings.limit;
+  $("#limit-input").value = state.settings.limit || "";
+  $("#month-limit-input").value = state.settings.monthLimit || "";
+  // Лимит включается кнопкой, число — рядом. Выключенный лимит нигде не показывается.
+  for (const b of document.querySelectorAll("[data-lim]")) {
+    const on = !!state.settings[b.dataset.lim];
+    b.classList.toggle("on", on);
+    b.nextElementSibling.classList.toggle("hidden", !on);
+  }
   $("#account-line").textContent = state.username ? `Вход выполнен как ${state.username}` : "";
 }
 
-$("#limit-input").addEventListener("change", (e) => {
-  const v = Math.round(Number(e.target.value));
-  if (v > 0 && v <= 200) { state.settings.limit = v; saveSettings(); renderAll(); }
+// Лимит 0 — выключен.
+const LIM_DEFAULT = { limit: 36, monthLimit: 20 };
+const limOff = {}; // последнее число выключенного лимита — чтобы при включении вернуть его
+for (const b of document.querySelectorAll("[data-lim]")) b.addEventListener("click", () => {
+  const k = b.dataset.lim;
+  if (state.settings[k]) { limOff[k] = state.settings[k]; state.settings[k] = 0; }
+  else state.settings[k] = limOff[k] || LIM_DEFAULT[k];
+  saveSettings(); renderAll();
 });
+for (const [id, key] of [["#limit-input", "limit"], ["#month-limit-input", "monthLimit"]]) {
+  $(id).addEventListener("change", (e) => {
+    const v = Math.round(Number(e.target.value || 0));
+    if (v >= 1 && v <= 200) { state.settings[key] = v; saveSettings(); renderAll(); }
+    else e.target.value = state.settings[key] || "";
+  });
+}
 $("#logout-btn").addEventListener("click", async () => {
   await api.logout();
   state.skips = []; state.days = []; state.lastSync = null; state.username = null;
   state.cabinetRaw = null; state.weekRaw.clear(); state.weekFetched.clear(); state.weekStart = null;
-  state.otherRaw.clear(); state.viewing = null; state.favorites = []; state.changes = {}; state.skipMarks = [];
+  state.otherRaw.clear(); state.viewing = null; state.favorites = []; state.changes = {}; state.weekSeen = {}; state.skipMarks = [];
   state.perf.clear(); state.perfIndex.clear();
-  api.save("favorites", "[]"); api.save("sched_changes2", "{}"); api.save("skip_marks", "[]");
+  api.save("favorites", "[]"); api.save("sched_changes2", "{}"); api.save("week_seen", "{}"); api.save("skip_marks", "[]");
   api.save("last_sync", "");
   showLogin();
 });
@@ -1567,6 +1655,7 @@ async function runSync(silent) {
     try { state.tasks = JSON.parse((await api.load("tasks")) || "[]"); } catch {}
     try { state.favorites = JSON.parse((await api.load("favorites")) || "[]"); } catch {}
     try { state.skipMarks = JSON.parse((await api.load("skip_marks")) || "[]"); } catch {}
+    scheduleReminders();
     Object.assign(sync.cfg, { addr: res.address, last: Date.now() });
     api.save("sync", JSON.stringify(sync.cfg));
     $("#sync-msg").textContent = `Синхронизировано: ${res.count} задач. Последний раз — ${new Date().toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })}.`;
@@ -1890,6 +1979,81 @@ async function initUpdates() {
   setInterval(() => { if (!document.hidden) checkUpdates(false); }, 6 * 3600_000);
 }
 
+// ---------- зачёты и экзамены ----------
+
+/** Зачёты и экзамены на ближайшую неделю из опубликованного расписания (без прогноза) — карточка на «Сегодня». */
+function renderExams(now = new Date()) {
+  const list = [0, 1, 2, 3, 4, 5].flatMap((k) => weekDays(addDays(currentMonday(), 7 * k), null, false))
+    .flatMap((d) => d.lessons.filter((l) => isExam(l.type) && kindOf(l.type) !== "конс").map((l) => ({ d, l })))
+    .filter(({ d, l }) => new Date(`${isoDate(d.date)}T${l.end.padStart(5, "0")}`) > now)
+    // Карточка — только за неделю до зачёта: раньше он виден в расписании, а на главной лишь мешал бы.
+    .filter(({ d }) => d.date - new Date(now.getFullYear(), now.getMonth(), now.getDate()) <= 7 * 864e5);
+  const card = $("#exams-card");
+  card.classList.toggle("hidden", !list.length);
+  if (!list.length) return;
+  const days = (d) => Math.round((new Date(d.date.getFullYear(), d.date.getMonth(), d.date.getDate()) - new Date(now.getFullYear(), now.getMonth(), now.getDate())) / 864e5);
+  const when = (n) => (n === 0 ? "сегодня" : n === 1 ? "завтра" : `через ${n} ${n % 10 === 1 && n % 100 !== 11 ? "день" : [2, 3, 4].includes(n % 10) && ![12, 13, 14].includes(n % 100) ? "дня" : "дней"}`);
+  card.html = `<div class="card-head"><h2>Зачёты и экзамены</h2><span class="muted small">${list.length}</span></div>
+    <div class="exam-list">${list.map(({ d, l }) => `<div class="exam-row">
+      <div class="exam-when"><b>${esc(fmtDay(d.date, { day: "numeric", month: "short" }))}</b><span>${esc(when(days(d)))}</span></div>
+      <div class="exam-what"><b>${esc(l.title)}</b><span class="muted small">${esc(examWord(l.type))} · ${esc(l.start)}${l.room ? ` · ауд. ${esc(l.room)}` : ""}${l.teacher ? ` · ${esc(l.teacher)}` : ""}</span></div>
+    </div>`).join("")}</div>`;
+}
+
+// ---------- напоминания о задачах (Android) ----------
+// Уведомления планирует сам телефон (будильником), поэтому они приходят и при закрытом приложении.
+// При любом изменении задач пересобираем их заново: отменяем запланированные и ставим актуальные.
+
+const REMIND_HOURS = [18, 19, 20, 21];
+const canRemind = () => /Android/i.test(navigator.userAgent) && !!api.notify;
+let remindTimer = null;
+function scheduleReminders() {
+  if (!canRemind()) return;
+  clearTimeout(remindTimer);
+  remindTimer = setTimeout(syncReminders, 800);
+}
+async function syncReminders() {
+  if (!canRemind()) return;
+  try {
+    await api.notify("cancel", {});
+    if (!state.settings.remind) return;
+    for (const r of taskReminders(liveTasks(), new Date(), state.settings.remindHour || 19)) {
+      await api.notify("notify", { options: {
+        id: r.id, title: r.title, body: r.body, largeBody: r.body, icon: "ic_stat_unitrack", autoCancel: true,
+        schedule: { at: { date: r.at.toISOString(), repeating: false, allowWhileIdle: true } },
+      } });
+    }
+  } catch (err) { console.warn("reminders", err); }
+}
+function renderReminders() {
+  // В демо (без Tauri) карточку показываем для вида; на Windows её нет — там приложение не работает в фоне.
+  $("#remind-card").classList.toggle("hidden", !(canRemind() || !tauri));
+  const on = !!state.settings.remind, h = state.settings.remindHour || 19;
+  $("#remind-name").textContent = on ? `накануне в ${h}:00` : "выключены";
+  $("#remind-grid").html = `<button class="pchip ${on ? "" : "on"}" data-remind="off">Выключены</button>` +
+    REMIND_HOURS.map((x) => `<button class="pchip ${on && h === x ? "on" : ""}" data-remind="${x}">Накануне в ${x}:00</button>`).join("");
+}
+$("#remind-grid").addEventListener("click", async (e) => {
+  const b = e.target.closest("[data-remind]");
+  if (!b) return;
+  if (b.dataset.remind === "off") state.settings.remind = false;
+  else {
+    // Android 13+ спрашивает разрешение на уведомления — один раз.
+    if (canRemind()) {
+      try {
+        let ok = await api.notify("is_permission_granted");
+        if (ok !== true) ok = (await api.notify("request_permission")) === "granted";
+        if (!ok) { toast("Уведомления запрещены в настройках телефона"); return; }
+      } catch (err) { toast(String(err)); return; }
+    }
+    state.settings.remind = true;
+    state.settings.remindHour = Number(b.dataset.remind);
+  }
+  saveSettings();
+  renderReminders();
+  syncReminders();
+});
+
 // ---------- темы оформления ----------
 // [id, название, фон, карточка, акцент]; «Как в системе» — тёмная лиловая или светлая вслед за ОС.
 const THEMES = [
@@ -1967,11 +2131,6 @@ $("#icon-grid").addEventListener("click", async (e) => {
   if (!b || b.dataset.iconId === (state.settings.icon || "lilac")) return;
   const prev = state.settings.icon || "lilac";
   state.settings.icon = b.dataset.iconId;
-  // Иконки, убранные после 0.3.0, — возвращаем «Сирень» (на Android это же выключит старый ярлык).
-  if (state.settings.icon && !APP_ICONS.some((i) => i[0] === state.settings.icon)) {
-    state.settings.icon = "lilac"; saveSettings();
-    if (/Android/i.test(navigator.userAgent)) api.setAppIcon?.("lilac").catch(() => {});
-  }
   applyBrand();
   renderIcons();
   try {
@@ -2030,8 +2189,15 @@ async function boot() {
   await loadLocal();
   applyTheme();
   renderThemes();
+  // Иконки, убранные после 0.3.0, — возвращаем «Сирень» (на Android это же выключит старый ярлык).
+  if (state.settings.icon && !APP_ICONS.some((i) => i[0] === state.settings.icon)) {
+    state.settings.icon = "lilac"; saveSettings();
+    if (/Android/i.test(navigator.userAgent)) api.setAppIcon?.("lilac").catch(() => {});
+  }
   applyBrand();
   renderIcons();
+  renderReminders();
+  syncReminders(); // на случай, если срок задачи сдвинулся или её сделали на другом устройстве
   // На Windows иконка окна не сохраняется между запусками — ставим заново. На Android ярлык помнит её сам.
   if (state.settings.icon && state.settings.icon !== "lilac" && !/Android/i.test(navigator.userAgent)) api.setAppIcon?.(state.settings.icon).catch(() => {});
   await initSync();

@@ -53,9 +53,15 @@ function demoWeek(monday) {
   const [y, m, d0] = monday.split("-").map(Number);
   const now = new Date();
   const curMon = new Date(now.getFullYear(), now.getMonth(), now.getDate() - ((now.getDay() + 6) % 7));
-  if (new Date(y, m - 1, d0) > curMon) return { count: 0, days: [] };
+  // Как на сайте: выложено на 3 недели вперёд, в последней — зачёт; дальше пусто (приложение покажет прогноз).
+  const ahead = Math.round((new Date(y, m - 1, d0) - curMon) / 6048e5);
+  if (ahead > 3) return { count: 0, days: [] };
   const days = [];
-  for (let i = 0; i < 5; i++) days.push({ num: String(i + 1), date: iso(new Date(y, m - 1, d0 + i)), count: WEEK[i].length, lessons: WEEK[i] });
+  for (let i = 0; i < 5; i++) {
+    let lessons = WEEK[i];
+    if (ahead === 3 && i === 4) lessons = [...lessons.slice(0, -1), { ...lessons[lessons.length - 1], title: "Маркетинг", type: "Зачет (в устной форме)" }];
+    days.push({ num: String(i + 1), date: iso(new Date(y, m - 1, d0 + i)), count: lessons.length, lessons });
+  }
   return { count: days.length, days };
 }
 
@@ -146,6 +152,12 @@ function demoPerformance(kdisc) {
         IMARK: past && l.type !== "лек." && k % 3 === 0 ? String(6 + (k % 4)) : "", SABSENT: past && k % 7 === 3 ? "н" : " ",
       });
     }
+  }
+  // Дальше по плану — темы без даты: преподаватель расписал занятия наперёд.
+  const kinds = [...new Set(Object.values(WEEK).flat().filter((l) => l.title === subject).map((l) => KIND[l.type] || "Лекция"))];
+  for (let j = 1; j <= 4; j++) {
+    rows.push({ DATE_ACADEMIC: "", NPOCEN: kinds[j % kinds.length] || "Лекция", SSEQUENCE: `${Math.ceil((k + j) / 2) + 20}.${j}.`,
+      NUPCONTENT: `<p>${TOPICS[(Math.floor((k + j - 1) / 2) + 3) % TOPICS.length]}</p>`, NDISC: subject, FIO_PREP: "", IMARK: "", SABSENT: " " });
   }
   return rows;
 }
